@@ -15,7 +15,8 @@
   (conseq conseq)
   (altern altern))
 
-(define-class <lambda> (args body)
+(define-class <lambda> (name args body)
+  (name      name)
   (args      args)
   (body      body)
   (free-vars '()))
@@ -29,6 +30,10 @@
 (define-class <variable> (name)
   (name name))
 
+(define-class <fix> (defs body)
+  (defs defs)
+  (body body))
+  
 ;; LLIL: A machine executable language
 
 ;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics in LLIL. 
@@ -36,11 +41,6 @@
 ;; A label for a block of code
 (define-class <label> (name args body)
   (name name)
-  (args args)
-  (body body))
-
-;; Procedure definition
-(define-class <code> (args body)
   (args args)
   (body body))
 

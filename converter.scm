@@ -59,39 +59,78 @@
            (map expand combination))
           (_ e)))
 
+
 ;; convert to high-level AST
+;;
+  
 (define (convert-source e)
   (define (cs e)
     (match e
-           (('if x y)
-            (make <if> (convert-source x) (convert-source y) '()))
-           (('if x y z)
-            (make <if> (convert-source x) (convert-source y) (convert-source z)))
-           (('if _ ...)
-            (error convert-source "ill-formed conditional expression"))
-           (('lambda (bindings ...) body)
-            (make <lambda> bindings (convert-source body)))
-           (('lambda _ ...)
-            (error convert-source "ill-formed conditional expression"))
-           ((? null?)
-            (make <constant> e))
-           ((? boolean?)
-            (make <constant> e))
-           ((? number?)
-            (make <constant> e))
-           ((_ ...)
-            (make <comb> (map convert-source e)))
-           ((? symbol?)
-            (make <variable> e))))
-;;  (make <lambda> (list) (cs e)))
-  (cs e))
+      (('if x y)
+       (make <if> (cs x) (cs y) '()))
+      (('if x y z)
+       (make <if> (cs x) (cs y) (cs z)))
+      (('if _ ...)
+       (error cs "ill-formed conditional expression"))
+      (('lambda (bindings ...) body)
+       (make <lambda> (gensym 'f) bindings (cs body)))
+      (('lambda _ ...)
+       (error cs "ill-formed conditional expression"))
+      ((? null?)
+       (make <constant> e))
+      ((? boolean?)
+       (make <constant> e))
+      ((? number?)
+       (make <constant> e))
+      ((_ ...)
+     (make <comb> (map cs e)))
+      ((? symbol?)
+       (make <variable> e))))
+  (make <lambda> (gensym 'f) (list) (cs e)))
+  
+(define (make-normal-lambda node)
+  ;; raise all lambda definitions to the top of the this lambda body
+  (define (collect node)
+    ;; collect nested lambda nodes in this scope
+    (match-object node
+      ((<lambda>)
+       (list node))
+      ((<if> test conseq altern)
+       (append (collect test) (collect conseq) (collect altern)))
+      ((<comb> args)
+        (apply append (map collect args)))
+      (else (list))))
+  (define (rewrite node)
+    ;; rewrite tree, replacing lambda nodes with their names
+    (match-object node
+      ((<lambda> name)
+       (make <variable> name))
+      ((<if> test conseq altern)
+       (make <if> (rewrite test) (rewrite conseq) (rewrite altern)))
+      ((<comb> args)
+       (make <comb> (map rewrite args)))
+      (else node)))
+  (define (normalize node)
+    (let* ((name (slot-ref node 'name))
+           (args (slot-ref node 'args))
+           (body (slot-ref node 'body))
+           (defs (map normalize (collect body))))
+      (if (null? defs)
+          node
+          (make <lambda> name args (make <fix> defs (rewrite body))))))
+  (let ((node (normalize node)))
+    (make <fix> (list node)
+      (make <comb>
+        (list (make <variable> (slot-ref node 'name)))))))
+      
+  
 (define builtins
   '(+ - * / < > <= = => car cdr cons null? list? boolean? number? string? pair?))
 
 (define (find-mapping name scopes)
   (let f ((scopes scopes))
     (if (null? scopes)
-        (if (memq name builtins) name)
+        (if (memq name builtins) name name)
         (let ((mapping (assq name (car scopes))))
           (if mapping
               (cdr mapping)
@@ -99,9 +138,16 @@
   
 (define (alpha-convert node scopes)
   (match-object node
-    ((<lambda> args body)
-     (let ((mappings (map (lambda (arg) (cons arg (gensym))) args)))
+    ((<fix> defs body)
+     (make <fix>
+       (map (lambda (def)
+              (alpha-convert def scopes))
+            defs)
+       (alpha-convert body scopes)))
+    ((<lambda> name args body)
+     (let ((mappings (map (lambda (arg) (cons arg (gensym 't))) args)))
        (make <lambda>
+         name
          (map cdr mappings)
          (alpha-convert body (cons mappings scopes)))))
     ((<if> test conseq altern)
@@ -115,7 +161,6 @@
     ((<variable> name)
      (make <variable> (find-mapping name scopes)))
     (else node)))
-    
 
 (define (cps-convert node cont)
   (match-object node
@@ -125,48 +170,64 @@
     ((<variable>)
      (if (null? cont) node
          (make <comb> (list cont node))))
-    ((<lambda> args body)
-     (let* ((tn (gensym))
-            (fn (make <lambda>
-                  `(,@args ,tn)
-                  (cps-convert body (make <variable> tn))))) 
-       (if (null? cont) fn
-           (make <comb> (list cont fn)))))
+    ((<fix> defs body)
+     (make <fix>
+       (map (lambda (def)
+              (cps-convert def '()))
+            defs)
+       (cps-convert body cont)))
+    ((<lambda> name args body)
+     (let* ((cn (gensym 'c)))
+       (make <lambda>
+         name
+         `(,@args ,cn)
+         (cps-convert body (make <variable> cn)))))
     ((<comb> args)
-     (let f ((x args) (y '()) (z '()))
+     ;; x - combination args
+     ;; y - new args for combination (x -> y)
+     ;; z - args which are not atoms
+     ;; w - names for continuations
+     (let f ((x args) (y '()) (z '()) (w '()))
        (cond
         ((null? x)
-         (let g ((form (make <comb> (reverse (cons cont y)))) (y y) (z z))
+         (let g ((form (make <comb> (reverse (cons cont y)))) (y y) (z z) (w w))
            (if (null? z)
                form
                (if (null? (car z))
-                   (g form (cdr y) (cdr z))
-                   (g (cps-convert (car z) (make <lambda> (list (slot-ref (car y) 'name)) form))
+                   (g form (cdr y) (cdr z) (cdr w))
+                   (g (make <fix>
+                        (list
+                          (make <lambda>
+                            (car w)
+                            (list (slot-ref (car y) 'name))
+                            form))
+                        (cps-convert (car z) (make <variable> (car w))))
                       (cdr y)
-                      (cdr z))))))
+                      (cdr z)
+                      (cdr w))))))
         ((is-a? (car x) <constant>)
-         (f (cdr x) (cons (car x) y) (cons '() z)))
+         (f (cdr x) (cons (car x) y) (cons '() z) (cons '() w)))
         ((is-a? (car x) <variable>)
-         (f (cdr x) (cons (car x) y) (cons '() z)))
-        ((is-a? (car x) <lambda>)
-         (f (cdr x) (cons (cps-convert (car x) '()) y) (cons '() z)))
-        (else 
-         (f (cdr x) (cons (make <variable> (gensym)) y) (cons (car x) z))))))
+         (f (cdr x) (cons (car x) y) (cons '() z) (cons '() w)))
+        (else
+         (f (cdr x) (cons (make <variable> (gensym 't)) y) (cons (car x) z) (cons (gensym 'c) w))))))
     ((<if> test conseq altern)
-     (let ((kn (gensym)))
-       (make <comb>
-         (list
-          (make <lambda> (list kn)  
-            (cps-convert test
-              (let ((tn (gensym)))
-                (make <lambda> (list tn)
-                  (make <if>
-                    (make <variable> tn)
-                    (cps-convert conseq (make <variable> kn))
-                    (cps-convert altern (make <variable> kn)))))))
-          cont))))
+     (let ((kn (gensym 't))
+           (fn (gensym 'f))
+           (cn (gensym 'c))
+           (tn (gensym 't)))
+       (make <fix>
+         (list (make <lambda> fn (list kn)
+                 (make <fix>
+                   (list (make <lambda> cn (list tn)
+                           (make <if>
+                             (make <variable> tn)
+                             (cps-convert conseq (make <variable> kn))
+                             (cps-convert altern (make <variable> kn)))))
+                   (cps-convert test (make <variable> cn)))))
+         (make <comb> (list (make <variable> fn) cont)))))
     (else (error 'cps-convert "not an AST node" node))))
-
+       
 (define (annotate-free-vars node)
   (let ((union (lambda lists
                  (apply lset-union (cons eq? lists))))
@@ -186,6 +247,12 @@
          (if (null? args)
              x
              (f (union x (annotate-free-vars (car args))) (cdr args)))))
+      ((<fix> defs body)
+       (apply union (append (map annotate-free-vars defs)
+                            (list (diff (annotate-free-vars body)
+                                        (map (lambda (def)
+                                               (slot-ref def 'name))
+                                             defs))))))
       ((<lambda> args body)
        (slot-set! node
                   'free-vars
@@ -203,11 +270,17 @@
 
 (define (closure-convert-body node c-name free-vars)
   (match-object node
-    ((<lambda> args body free-vars)
-     (let ((c-name (gensym 'c)))
-       (let ((mk (make <lambda> (cons c-name args) (closure-convert-body body c-name free-vars))))
-         (slot-set! mk 'free-vars free-vars)
-         mk)))
+    ((<fix> defs body)
+     (make <fix>
+       (map (lambda (def)
+              (closure-convert-body def c-name free-vars))
+            defs)
+       (closure-convert-body body c-name free-vars)))
+    ((<lambda> name args body free-vars)
+     (let ((cn (gensym 'c)))
+       (let ((converted (make <lambda> name (cons cn args) (closure-convert-body body cn free-vars))))
+         (slot-set! converted 'free-vars free-vars)
+         converted)))
     ((<comb> args)
      (let f ((x args) (y '()) (z '()))
        (cond
@@ -260,15 +333,28 @@
                            (null? queue)))
            (flatten-node (lambda (node)
                            (match-object node
-                             ((<lambda> args body free-vars)
-                              (let ((fname (gensym 'f)))
-                                (queue-push! (cons node fname))
-                                (let ((temp (gensym 'c)))
-                                  (make <record> (map (lambda (t)
+                             ((<fix> defs body)
+                              (let f ((x defs) (y '()) (form body))
+                                (cond
+                                 ((null? x)
+                                  form)
+                                 (else (f (cdr x)
+                                          (make <record>
+                                            (map (lambda (t)
                                                    (make <variable> t))
                                                  (cons fname free-vars))
-                                            (make <variable> temp)
-                                            (make <variable> temp)))))
+                                            (make <variable> (gensym 'r))
+                                            form))
+                              
+                             ((<lambda> args body free-vars)
+                              (queue-push! node)
+                              (let ((rn (gensym 'r)))
+                                (make <record>
+                                  (map (lambda (t)
+                                         (make <variable> t))
+                                       (cons fname free-vars))
+                                  (make <variable> rn)
+                                  (make <variable> rn))))
                              ((<if> test conseq altern)
                               (make <if>
                                 (flatten-node test)
@@ -285,15 +371,13 @@
                              (else node)))))
     (let f ((labels (list (make <label> (gensym 'f) (list) (flatten-node node)))))
       (if (queue-empty?)
-          labels
-          (let* ((pair (queue-pop!))
-                 (label (cdr pair))
-                 (node (car pair))
-                 (flattened (flatten-node (slot-ref node 'body))))
-            (f (cons (make <label>
-                       label
+          (make <fix> labels 
+          (let* ((node (queue-pop!))
+                 (body (flatten-node (slot-ref node 'body))))
+            (f (cons (make <lambda>
+                       (slot-ref node 'name)
                        (slot-ref node 'args)
-                       flattened)
+                       body)
                      labels)))))))
 
 (define (closure-convert node)

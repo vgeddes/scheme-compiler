@@ -4,6 +4,7 @@
 (use matchable)
 (include "class-syntax")
 
+
 (define make-sexp
   (lambda (node)
     (match-object node
@@ -11,8 +12,10 @@
       `(if ,(make-sexp test)
            ,(make-sexp conseq)
            ,(make-sexp altern)))
-     ((<lambda> args body free-vars)
-      `(lambda ,args ,free-vars ,(make-sexp body)))
+     ((<lambda> name args body free-vars)
+      `(lambda ,name ,args ,free-vars ,(make-sexp body)))
+     ((<fix> defs body)
+      `(fix ,(map make-sexp defs) ,(make-sexp body)))
      ((<comb> args)
       (map make-sexp args))
      ((<constant> value) value)
@@ -29,27 +32,45 @@
       `(label ,name ,args ,(make-sexp body))) 
      (else (error 'make-sexp "not an AST node" node)))))
 
-(define code
+(define code-1
   (expand '(let ((fib (lambda (n f)
                         (if (<= n 2)
                             1
                             (+ (f (- n 2) f) (f (- n 1) f))))))
              (fib 23 fib))))
 
-(define ast
-  (convert-source code))
 
-(define ast-1
-  (cps-convert (alpha-convert ast '())
-               (let ((a (gensym)))
-                 (make <lambda> (list a) (make <variable> a)))))
+(define code-2
+  (convert-source code-1))
 
+(define code-3
+  (make-normal-lambda code-2))
 
-(annotate-free-vars ast-1)
+(define code-4
+  (alpha-convert code-3 (list)))
 
-(define cc-1 (closure-convert ast-1))
+(pretty-print (make-sexp code-4))
 
-(print (flatten cc-1))
+(print)
 
-(pretty-print (map make-sexp (flatten cc-1)))
+(define code-5
+  (let ((cn (gensym 'c))
+        (tn (gensym 't)))
+    (make <fix>
+      (list (make <lambda> cn (list tn) (make <variable> tn)))
+      (cps-convert code-4 (make <variable> cn)))))
+
+(pretty-print (make-sexp code-5))
+
+(print)
+   
+(annotate-free-vars code-5)
+
+(define code-6 (closure-convert code-5))
+
+(pretty-print (make-sexp code-6))
+
+;; (print (flatten code-5))
+
+;; (pretty-print (map make-sexp (flatten code-5)))
 
