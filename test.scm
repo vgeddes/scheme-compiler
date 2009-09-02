@@ -5,72 +5,67 @@
 (include "class-syntax")
 
 
-(define make-sexp
+(define write-sexp
   (lambda (node)
     (match-object node
      ((<if> test conseq altern)
-      `(if ,(make-sexp test)
-           ,(make-sexp conseq)
-           ,(make-sexp altern)))
+      `(if ,(write-sexp test)
+           ,(write-sexp conseq)
+           ,(write-sexp altern)))
      ((<lambda> name args body free-vars)
-      `(lambda ,name ,args ,free-vars ,(make-sexp body)))
+      `(lambda ,name ,args ,free-vars ,(write-sexp body)))
      ((<fix> defs body)
-      `(fix ,(map make-sexp defs) ,(make-sexp body)))
+      `(fix ,(map write-sexp defs) ,(write-sexp body)))
      ((<comb> args)
-      (map make-sexp args))
+      (map write-sexp args))
+     ((<app> name args)
+      `(app ,(write-sexp name) ,(map write-sexp args)))
+     ((<prim> name args result cexp)
+      `(prim ,(write-sexp name) ,(map write-sexp args) ,(write-sexp result) ,(write-sexp cexp)))
      ((<constant> value) value)
      ((<variable> name) name)
      ((<record> values name cexp)
-      `(record ,(map make-sexp values) ,(make-sexp name) ,(make-sexp cexp)))
+      `(record ,(map write-sexp values) ,(write-sexp name) ,(write-sexp cexp)))
      ((<select> index record name cexp)
       `(select
         ,index
-        ,(make-sexp record)
-        ,(make-sexp name)
-        ,(make-sexp cexp)))
+        ,(write-sexp record)
+        ,(write-sexp name)
+        ,(write-sexp cexp)))
      ((<label> name args body)
-      `(label ,name ,args ,(make-sexp body))) 
-     (else (error 'make-sexp "not an AST node" node)))))
+      `(label ,name ,args ,(write-sexp body))) 
+     (else (error 'write-sexp "not an AST node" node)))))
 
-(define code-1
-  (expand '(let ((fib (lambda (n f)
-                        (if (<= n 2)
-                            1
-                            (+ (f (- n 2) f) (f (- n 1) f))))))
-             (fib 23 fib))))
+(define test-code-0
+  '(let ((fib (lambda (n f)
+                (if (<= n 2)
+                    1
+                    (+ (f (- n 2) f) (f (- n 1) f))))))
+     (fib 23 fib)))
+
+(define test-code-1
+  '(f (g (h (i))) (j 1) (k 2)))
+
+(define (print-node node)
+  (pretty-print (write-sexp node)))
+
+(define pipeline
+  (list
+    expand
+    convert-source
+    alpha-convert
+    cps-convert
+    identify-primitives
+    basic-lambda-lift
+    closure-convert
+    flatten))
+
+(define (compile source)  
+  (let f ((pass pipeline) (input source))
+    (if (null? pass)
+        input
+        (f (cdr pass) ((car pass) input)))))
 
 
-(define code-2
-  (convert-source code-1))
 
-(define code-3
-  (make-normal-lambda code-2))
-
-(define code-4
-  (alpha-convert code-3 (list)))
-
-(pretty-print (make-sexp code-4))
-
-(print)
-
-(define code-5
-  (let ((cn (gensym 'c))
-        (tn (gensym 't)))
-    (make <fix>
-      (list (make <lambda> cn (list tn) (make <variable> tn)))
-      (cps-convert code-4 (make <variable> cn)))))
-
-(pretty-print (make-sexp code-5))
-
-(print)
-   
-(annotate-free-vars code-5)
-
-(define code-6 (closure-convert code-5))
-
-(pretty-print (make-sexp code-6))
-
-;; (print (flatten code-5))
-
-;; (pretty-print (map make-sexp (flatten code-5)))
-
+(print-node (compile test-code-0))

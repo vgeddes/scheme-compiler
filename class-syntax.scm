@@ -44,14 +44,14 @@
     (match e
       ((match-object object ((type bindings ...) expr ...) ... ('else else-expr ...))
        `(cond
-         ,@(fold (lambda (type bindings expr x)
-                   (cons `((eq? (class-of ,object) ,type)
-                           (let
-                               ,(fold (lambda (name bindings)
-                                        (cons `(,name (slot-ref ,object ',name)) bindings))
-                                      '()
-                                      bindings)
+         ,@(reverse (fold (lambda (type bindings expr x)
+                            (cons `((eq? (class-of ,object) ,type)
+                                    (let
+                                        ,(fold (lambda (name bindings)
+                                                 (cons `(,name (slot-ref ,object ',name)) bindings))
+                                               '()
+                                               bindings)
                              ,@expr))
                          x))
-                 '() type bindings expr)
+                 '() type bindings expr))
          (else ,@else-expr))))))

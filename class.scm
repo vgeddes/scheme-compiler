@@ -43,9 +43,8 @@
 
 (define (instance? x)
   (and (wrapper? x)
-       (let ((x (wrapper-object x)))
-         (and (wrapper? x)
-              (vector? x)
+       (let ((x (unwrap-instance x)))
+         (and (vector? x)
               (< 0 (vector-length x))
               (eq? (vector-ref x 0) instance-marker)))))
 

@@ -33,7 +33,13 @@
 (define-class <fix> (defs body)
   (defs defs)
   (body body))
-  
+
+(define-class <prim> (name args result cexp)
+  (name name)
+  (args args)
+  (result result)
+  (cexp cexp))
+
 ;; LLIL: A machine executable language
 
 ;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics in LLIL. 
