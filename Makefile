@@ -1,15 +1,15 @@
 
 
-objects := class.o nodes.o converter.o test.o 
-macros  :=  class-syntax.scm
+objects := class.o nodes.o pass.o compile.o 
+macros  := class-syntax.scm
 
-all: test
+all: scheme
 
-test: $(objects)
+scheme: $(objects)
 	csc  -o $@ $^
 
 %.o: %.scm $(macros)
 	csc  -c $<
 
 clean:
-	-rm -rf *.o test
+	-rm -rf *.o scheme
