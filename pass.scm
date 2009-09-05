@@ -1,7 +1,7 @@
 
 
 
-(declare (unit convert)
+(declare (unit pass)
          (uses nodes class))
 
 (use matchable)
@@ -63,10 +63,13 @@
 ;; convert to high-level AST
 ;;
 
+
+  
+(define *primitives*
+  '(+ - * / < > <= >= = car cdr cons null? list? boolean? number? string? pair?))
+
 (define (primitive? op)
-  (case op
-    ((+ - * / < > <= >= =  car cdr cons null? list? boolean? number? pair?) #t)
-    (else #f)))
+  (if (memq op *primitives*) #t #f))
 
 (define (convert-source e)
   (define (cs e)
@@ -103,11 +106,6 @@
                  acc))
            (list)
            lst))))
-
-
-  
-(define builtins
-  '(+ - * / < > <= >= = car cdr cons null? list? boolean? number? string? pair?))
 
 (define (find-mapping name scopes)
   (let f ((scopes scopes))
@@ -317,7 +315,7 @@
                  (apply lset-difference (cons eq? lists)))))
     (match-object node
       ((<variable> name)
-       (diff (list name) builtins))
+       (diff (list name) *primitives*))
       ((<constant>) '())
       ((<if> test conseq altern)
        (union
@@ -358,7 +356,7 @@
 
 (define (primitive-application args)
   (let ((fun (car args)))
-    (if (memq (slot-ref fun 'name) builtins)
+    (if (memq (slot-ref fun 'name) *primitives*)
         (error 'primitive-application "should not reach here" (slot-ref fun 'name))
         (let ((fn (gensym 't)))
           (make <select> 0 fun (make <variable> fn)

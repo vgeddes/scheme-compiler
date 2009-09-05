@@ -1,9 +1,8 @@
 
-(declare (uses convert class))
+(declare (uses pass class))
 
 (use matchable)
 (include "class-syntax")
-
 
 (define write-sexp
   (lambda (node)
