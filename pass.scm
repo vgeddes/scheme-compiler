@@ -66,7 +66,7 @@
 
   
 (define *primitives*
-  '(+ - * / < > <= >= = car cdr cons null? list? boolean? number? string? pair?))
+  '(+ - * / < > <= >= = car cdr cons null? pair? list? boolean? integer? string?))
 
 (define (primitive? op)
   (if (memq op *primitives*) #t #f))
@@ -117,7 +117,7 @@
           (if mapping
               (cdr mapping)
               (f (cdr scopes)))))))
-  
+
 (define (alpha-convert node)
   (define (alpha-convert node scopes)
     (match-object node
@@ -210,9 +210,17 @@
                                             (cps-convert altern (make <variable> kn))))))
                  cont))))
       (else (error 'cps-convert "not an AST node" node))))
-  (let ((cn (gensym 'c))
+  (let ((cn (gensym 'f))
         (tn (gensym 't)))
-    (cps-convert node (make <lambda> cn (list tn) (make <variable> tn)))))
+    (cps-convert
+      node
+      (make <lambda> cn (list tn)
+            (make <prim>
+              (make <variable> 'return)
+              (list (make <variable> tn))
+              (make <variable> tn) (make <null>))))))
+
+
 
 (define (identify-primitives cexp)
   (match-object cexp
@@ -251,6 +259,8 @@
          name
          args
          (identify-primitives body)))
+      ((<prim>)
+       cexp)
       (else (error 'identify-primitives "not an AST node" cexp))))
 
 
@@ -291,7 +301,6 @@
                (args (slot-ref node 'args))
                (body (slot-ref node 'body))
                (defs (map normalize (collect body))))
-     
           (if (null? defs)
               node
               (make <lambda> name args (make <fix> defs (rewrite body)))))
@@ -308,7 +317,7 @@
             (make <variable> (slot-ref node 'name)) (list)))))
 
 
-(define (annotate-free-vars node)
+(define (analyze-free-vars node)
   (let ((union (lambda lists
                  (apply lset-union (cons eq? lists))))
         (diff  (lambda lists
@@ -319,31 +328,33 @@
       ((<constant>) '())
       ((<if> test conseq altern)
        (union
-        (annotate-free-vars test)
-        (annotate-free-vars conseq)
-        (annotate-free-vars altern)))
+        (analyze-free-vars test)
+        (analyze-free-vars conseq)
+        (analyze-free-vars altern)))
       ((<app> name args)
        (let f ((x '()) (args (cons name args)))
          (if (null? args)
              x
-             (f (union x (annotate-free-vars (car args))) (cdr args)))))
-      ((<prim> args result cexp)
+             (f (union x (analyze-free-vars (car args))) (cdr args)))))
+      ((<prim> name args result cexp)
        (let f ((x (list)) (args args))
          (if (null? args)
-             (union x (diff (annotate-free-vars cexp) (list (slot-ref result 'name))))
-             (f (union x (annotate-free-vars (car args))) (cdr args)))))
+             (union x (diff (analyze-free-vars cexp) (list (slot-ref result 'name))))
+             (f (union x (analyze-free-vars (car args))) (cdr args)))))
       ((<fix> defs body)
-       (apply union (append (map annotate-free-vars defs)
-                            (list (diff (annotate-free-vars body)
+       (apply union (append (map analyze-free-vars defs)
+                            (list (diff (analyze-free-vars body)
                                         (map (lambda (def)
                                                (slot-ref def 'name))
                                              defs))))))
       ((<lambda> args body)
        (slot-set! node
                   'free-vars
-                  (diff (annotate-free-vars body) args))
+                  (diff (analyze-free-vars body) args))
        (slot-ref node 'free-vars))
-      (else (error 'annotate-free-vars "not an AST node" node)))))
+      ((<null>)
+       (list))
+      (else (error 'analyze-free-vars "not an AST node" node)))))
 
 (define (closure-index name names)
   (let f ((i 1) (names names))
@@ -362,6 +373,10 @@
           (make <select> 0 fun (make <variable> fn)
                 (make <app> (make <variable> fn) (cons fun (cdr args))))))))
 
+;;
+;; assume all functions escape -> each function takes a closure arg
+;; optimize application of known functions by jumping directly to the function's label instead of using the function ptr stored in the function's closure. 
+;;
 
 (define (closure-convert-body node c-name free-vars)
   (match-object node
@@ -468,9 +483,12 @@
        (closure-convert-body test c-name free-vars)
        (closure-convert-body conseq c-name free-vars)
        (closure-convert-body altern c-name free-vars)))
+    ((<null>)
+     node)
     (else node)))
 
 (define (closure-convert node)
+  (analyze-free-vars node)
   (closure-convert-body node #f '()))
 
 
@@ -511,3 +529,56 @@
                        (slot-ref node 'args)
                        (flatten-node (slot-ref node 'body)))
                        labels)))))))
+
+;;
+;; Converts a function into an ordered list of basic blocks
+;;
+;; Blocks are ordered in such a way that the false label of a
+;; conditional jump appears right after the block that terminates with the conditional jump.
+;;
+(define (compute-basic-blocks-for-function node)
+  (letrec ((body (slot-ref node 'body))
+           (blocks (list))
+           (add-block (lambda (block)
+                        (let ((label (gensym 'L)))
+                        (set! blocks (cons (cons label block) blocks))
+                        label)))
+         (make-block (lambda (head)
+                       (let f ((node head))
+                           (match-object node             
+                             ((<prim> cexp)
+                              (f cexp))
+                             ((<app>)
+                              head)
+                             ((<select> cexp)
+                              (f cexp))
+                             ((<record> cexp)
+                              (f cexp))
+                             ((<if> test conseq altern)
+                              (let ((L1 (add-block (make-block conseq)))
+                                    (L2 (add-block (make-block altern))))
+                                (slot-set! node 'conseq (make <label> L1))
+                                (slot-set! node 'altern (make <label> L2))
+                                head))
+                             ((<null>)
+                              head)
+                             (else (error 'make-block "should not reach" node))))))
+         (entry-block (make-block body)))
+    (make <fun>
+      (slot-ref node 'name)
+      (slot-ref node 'args)
+      (cons
+       (cons (slot-ref node 'name) entry-block)
+       blocks)
+      (list))))
+
+(define (basic-value node)
+  (match-object node
+    ((<variable> name)
+     name)
+    ((<label> name)
+     name)
+    ((<constant> value)
+     value)
+    (else (error 'basic-value node))))
+

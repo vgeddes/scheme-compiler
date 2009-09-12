@@ -6,6 +6,9 @@
 
 ;; class protocol
 
+
+
+
 (define-record wrapper object)
 
 (define-record-printer (wrapper x port)
@@ -119,13 +122,13 @@
   (let ((info (assq name
                     (class-accessors (class-of x)))))
     (if info ((second info) x)
-        (error "no such slot found" name))))
+        (error "no such slot found" x name))))
 
 (define (slot-set! x name value)
   (let ((info (assq name
                     (class-accessors (class-of x)))))
     (if info ((third info) x value)
-        (error "no such slot found" name))))
+        (error "no such slot found" x name))))
 
 (define (subclass? x y)
   (cond

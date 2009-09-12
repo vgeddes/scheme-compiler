@@ -40,15 +40,15 @@
   (result result)
   (cexp cexp))
 
+(define-class <null> ())
+
 ;; LLIL: A machine executable language
 
 ;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics in LLIL. 
 
 ;; A label for a block of code
-(define-class <label> (name args body)
-  (name name)
-  (args args)
-  (body body))
+(define-class <label> (name)
+  (name name))
 
 ;; Function application. The compiler overloads this operation for primitive application.
 ;; This operation never returns, but merely passes control to its continuation
@@ -68,3 +68,76 @@
   (values values)
   (name name)
   (cexp cexp))
+
+
+(define-class <block> (head tail pred succ notes)
+  (head head)
+  (tail tail)
+  (pred pred)
+  (succ succ))
+
+
+
+(define-class <code> (entry labels)
+  (entry entry)
+  (labels labels))
+
+(define-class <fun> (label args blocks notes)
+  (label label)
+  (args args)
+  (blocks blocks)
+  (notes notes))
+  
+(define-class <x86/add> (x y)
+  (x x) (y y))
+
+(define-class <x86/sub> (x y)
+  (x x) (y y))
+
+(define-class <x86/mul> (x)
+  (x))
+
+(define-class <x86/cmp> (x y)
+  (x x) (y y))
+
+(define-class <x86/je> (x)
+  (x))
+
+(define-class <x86/jne> (x)
+  (x))
+
+(define-class <x86/jl> (x)
+  (x))
+
+(define-class <x86/jle> (x)
+  (x))
+
+(define-class <x86/jg> (x)
+  (x))
+
+(define-class <x86/jge> (x)
+  (x))
+
+(define-class <x86/jmp> (x)
+  (x))
+
+(define-class <x86/sete> (x)
+  (x x))
+
+(define-class <x86/setne> (x)
+  (x x))
+
+(define-class <x86/and> (x y)
+  (x x) (y y))
+
+(define-class <x86/or> (x y)
+  (x x) (y y))
+
+(define-class <x86/shr> (x y)
+  (x x) (y y))
+
+(define-class <x86/shl> (x y)
+  (x x) (y y))
+  
+(define-class <x86/mov> (x y)
+  (x x) (y y))
