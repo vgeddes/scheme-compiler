@@ -2,56 +2,37 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
-(define-for-syntax (make-gensyms inits)
-  (map (lambda (init)
-         (cons init (gensym 't)))
-       inits))
+(define-syntax define-struct
+  (syntax-rules ()
+    ((define-struct name (fields ...))
+     (define-record name fields ...))))
 
-(define-for-syntax (rename bindings expr)
-  (cond 
-   ((list? expr)
-    (map (lambda (e) (rename bindings e))
-         expr))
-   ((symbol? expr) 
-    (cond ((assq expr bindings) => cdr)
-          (else expr)))
-   (else expr)))
- 
-(define-for-syntax (emit-initializer inits super-inits slots slot-inits)
-  (let ((bindings (fold (lambda (slot slot-init bindings)
-                          (cons `(slot-set! object ',slot ,slot-init) bindings))
-                         '() slots slot-inits)))
-    `(lambda (class)
-      (lambda (object ,@inits)
-        ((class-initializer (class-super class)) object ,@super-inits)
-        ,@bindings))))
-
-(define-for-syntax (emit-class name inits super super-inits slots slot-inits)
-  (let ((initializer (emit-initializer inits super-inits slots slot-inits)))
-    `(begin
-       (define ,name (make <class> ',name ,super ',slots ,initializer)))))
-
-(define-syntax define-class
+(define-syntax struct-case
   (lambda (e r c)
-    (match e
-      (('define-class name (inits ...) '=> super (super-inits ...) (slots slot-inits) ...)
-       (emit-class name inits super super-inits slots slot-inits))
-      (('define-class name (inits ...) (slots slot-inits) ...)
-       (emit-class name inits '<top> '() slots slot-inits)))))
-
-(define-syntax match-object
-  (lambda (e r c)
-    (match e
-      ((match-object object ((type bindings ...) expr ...) ... ('else else-expr ...))
-       `(cond
-         ,@(reverse (fold (lambda (type bindings expr x)
-                            (cons `((eq? (class-of ,object) ,type)
-                                    (let
-                                        ,(fold (lambda (name bindings)
-                                                 (cons `(,name (slot-ref ,object ',name)) bindings))
-                                               '()
-                                               bindings)
-                             ,@expr))
-                         x))
-                 '() type bindings expr))
-         (else ,@else-expr))))))
+    (let* ((%begin      (r 'begin))
+           (%if         (r 'if))
+           (%let        (r 'let))
+           (%block-ref  (r '##sys#block-ref))
+           (%structure? (r '##sys#structure?)))
+      (define (generate-bindings v fields i)
+        (match fields
+          (() '())
+          ((x . x*)
+           (cons `(,x (,%block-ref ,v ,i)) (generate-bindings v x* (+ i 1))))))
+      (define (generate-body v clauses)
+        (match clauses
+          (() (error #f "unmatched " v))
+          ((('else expr expr* ...))
+           `(,%begin ,expr ,@expr*))
+          ((((name fields* ...) expr expr* ...) clause* ...)
+           (let ((bindings (generate-bindings v fields* 1))
+                 (altern (generate-body v clause*)))
+             `(,%if (,%structure? ,v ',name)
+                    (,%let ,bindings
+                           ,expr ,@expr*)
+                    ,altern)))))
+      (match e
+        ((_ expr clause* ...)
+         (let* ((v (gensym))
+                (body (generate-body v clause*)))
+           `(,%let ((,v ,expr)) ,body)))))))
