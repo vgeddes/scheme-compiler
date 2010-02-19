@@ -1,11 +1,11 @@
 
 
-objects := nodes.o pass.o compile.o 
-macros  := class-syntax.scm
+objects := nodes.o pass.o compile.o munch.o arch.o liveness.o utils.o
+macros  := class-syntax.scm munch-syntax.scm arch-syntax.scm
 
-all: scheme asm-test
+all: scc asm-test
 
-scheme: $(objects)
+scc: $(objects)
 	csc -o $@ $^
 
 %.o: %.scm $(macros)

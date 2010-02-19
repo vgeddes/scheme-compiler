@@ -1,5 +1,5 @@
 
-(declare (uses pass))
+(declare (uses pass nodes liveness))
 
 (use matchable)
 (include "class-syntax")
@@ -53,7 +53,7 @@
         ,(write-sexp name)
         ,(write-sexp cexp)))
      ((label name)
-      name)
+      (string->symbol (format "$~s" name)))
      ((module contexts)
       `(module ,(map write-sexp contexts)))
      ((context formals start-block blocks)
@@ -88,7 +88,9 @@
     basic-lambda-lift
     closure-convert
     flatten
-    rtl-convert))
+    rtl-convert
+    select-instructions
+    allocate-registers))
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))

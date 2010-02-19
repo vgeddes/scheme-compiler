@@ -1,3 +1,6 @@
 *.o
-scheme
+scc
 papers
+asm-test
+asm-test.c
+asm-test.nasm

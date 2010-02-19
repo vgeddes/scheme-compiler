@@ -20,7 +20,7 @@
 
 ;; LLIL: A machine executable language
 
-;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics in LLIL. 
+;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics at this level. 
 
 ;; A label for a block of code
 (define-struct label   (name))
@@ -29,7 +29,7 @@
 ;; This operation never returns, but merely passes control to its continuation
 (define-struct app     (name args))
 
-;; Selects a value from a record and binds it to 'name in cexp
+;; Selects a value from a record and binds it to 'name in the continuation expression 'cexp
 (define-struct select  (index record name cexp))
 
 ;; Creates a record from a list of values and binds it to 'name in cexp
@@ -39,7 +39,13 @@
 
 (define-struct module  (contexts))
 
-
-(define-struct basic-block (name head tail pred succ))
-(define-struct node (next prev bb name op args))
+(define-struct node (id type value pred succ))
 (define-struct context (formals start blocks))
+
+(define-struct instr (descriptor operands use-list def-list))
+(define-struct instr-descriptor (name operand-spec format))
+
+;; represents an x86 memory addressing mode
+(define-struct x86-memref (base-reg disp offset-reg scale))
+
+(define-struct selection-node (opcode operands))

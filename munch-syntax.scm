@@ -2,84 +2,126 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
-(define-syntax munch
+(define-syntax buf-append
+  (syntax-rules ()
+   ((append-to-buf buf (production ...))
+    (box-set! buf (append (box-ref buf) (list production ...))))))
+
+(define-syntax define-munch-rules
   (lambda (e r c)
-    (define (rewrite-pattern pat)
+    
+    (define renamed '())
+    (define (rename name)
+      (cond
+       ((assq name renamed)
+        => cdr)
+       (else
+        (let ((x (gensym)))
+          (set! renamed (cons (cons name x) renamed))
+          x))))
+  
+    ;; select-names
+    ;;
+    ;; Find names (which are bound to nodes by 'match) which need to be expanded next by the maximal-munch algorithm 
+    ;;
+    ;; (add (i32 x) op2)
+    ;; => (op2)
+
+    (define (select-names pat)
+      (match pat
+        ((? symbol? x)
+         (list x))
+        ((or ('i8 x) ('i32 x) ('i64 x) ('label x) ('temp x))
+         '())
+        ((opcode operand* ...)
+         (apply append (map select-names operand*)))))
+
+    ;; compile-pattern
+    ;;
+    ;; Transform high-level patterns into low-level 'match patterns
+    ;; 
+    ;;  (add (i32 x) op2)
+    ;;  => ($ selection-node 'add (? i32? x) (? symbol? g67))
+
+    (define (compile-pattern pat)
       (match pat
         (('i8 x)
          `(? i8? ,x))
         (('i32 x)
          `(? integer? ,x))
-        (('L x)
-         `('L ,x))
-        (('T x)
+        (('label x)
+         `('label ,x))
+        (('temp x)
          `(? symbol? ,x))
-        ((? symbol? x) x)
-        ((op e* ...)
-         `#(',op ,@(map rewrite-pattern e*)))))
-    (define (generate-bindings bindings buf)
+        ((? symbol? x) (rename x))
+        ((opcode operand* ...)
+         `($ selection-node ',opcode ,(map compile-pattern operand*)))))
+
+    (define (generate-bindings bindings)
       (match bindings
         (() '())
         ((expr . rest)
-         (cons `(,expr (munch-expr ,expr ,buf)) (generate-bindings rest buf)))))    
-    (define (generate-rule rule buf)
+         (cons `(,expr (munch-expr ,(rename expr) buf)) (generate-bindings rest)))))
+
+    (define (parse-temp-cls out)
+      (match out
+        (('temps t* ...) t*)
+        (else (error 'parse-temp-cls))))
+
+    (define (parse-out-cls out)
+      (match out
+        (('out x) x)
+        (('out)  #f)
+        (else (error 'parse-out-cls))))
+
+    (define (parse-tmpl out)
+      (match out
+        ((instr* ...) instr*)
+        (else (error 'parse-tmpl))))
+
+    (define (generate-rule pat temps out tmpl)
+      (let* ((nodes-to-expand (select-names    pat))
+             (pat-compiled    (compile-pattern pat))
+             (bindings
+              (append
+               ;; Bind names to expanded nodes
+               (generate-bindings nodes-to-expand)
+               (cond
+                ;; bind the name 'out' to a gensym if this production requires a return value (in which case out != #f)
+                ;; AND the user-specified return value is not already listed in nodes-to-expand. 
+                ((and out (not (memq out nodes-to-expand)))
+                 `((,out (gensym 't))))
+                (else '()))
+               ;; bind temps to unique symbols
+               (map (lambda (temp) `(,temp (gensym 't))) temps)))
+             (%let* (r 'let*)))
+        `(,pat-compiled
+          (,%let* ,bindings
+            (buf-append buf ,tmpl)
+            ,out))))
+
+    (define (compile-rule rule)
       (match rule
-        ((pat value)
-         `(,(rewrite-pattern pat) ,value))
-        ((pat ('in in* ...) ('out out* ...) tmpl)
-         (let* ((bindings (generate-bindings (reverse in*) buf))
-                (return-value (if (null? out*) '() (car out*)))
-                (return-value-binding (cond
-                                       ((null? return-value) '())
-                                       ((find (lambda (in) (eq? in return-value)) in*)
-                                        '())
-                                       (else
-                                        `((,return-value (gensym 't)))))))
-           (if (null? return-value)
-               `(,(rewrite-pattern pat)
-                 (let* ,bindings
-                   (box-set! ,buf (append (box-ref ,buf) (list ,@tmpl)))))
-               `(,(rewrite-pattern pat)
-                 (let ,return-value-binding
-                   (let* ,bindings
-                     (box-set! ,buf (append (box-ref ,buf) (list ,@tmpl)))
-                     ,return-value))))))))
+        ((('temp x) x)
+         `((? symbol? ,x) ,x))
+        ((pat temp-cls out-cls tmpl) 
+         (generate-rule
+            pat
+            (parse-temp-cls temp-cls)  
+            (parse-out-cls  out-cls)
+            (parse-tmpl     tmpl)))))
+    
     (match e
-      (('munch node buf rule* ...)
-       `(match ,node
-          ,@(fold (lambda (rule lst)
-                    (cons (generate-rule rule buf) lst))
-                  '()
-                  rule*)
-          (else (munch-rest ,node ,buf)))))))
-
-
-(define-syntax instruction-info
-  (lambda (e r c)
-    (define (generate-instruction-descriptor name fmt op-spec)
-      (let ((%define (r 'define))
-            (%lambda (r 'lambda))
-            (%let    (r 'let))
-            (descriptor-name (string->symbol (format "~s-descriptor" name))))
-        `((,%define ,descriptor-name
-            (make-instr-descriptor
-             ',name
-             ',fmt
-             (make-def-fold-proc ',op-spec)
-             (make-use-fold-proc ',op-spec)))
-          (,%define ,name
-            (,%lambda operands
-              (make-instr ,descriptor-name operands))))))
-    (match e
-      (('instruction-info arch definition* ...)
-       (let ((compiled-definitions
-              (apply append
-                (map (lambda (definition)
-                       (match definition
-                         ((name (op-spec* ...) fmt)
-                          (generate-instruction-descriptor name fmt op-spec*))))
-                     definition*)))
-             (%begin (r 'begin)))
-         `(,%begin
-           ,@compiled-definitions))))))
-
+      (('define-munch-rules rule* ...)
+       (let ((compiled-rule* (reverse
+                               (fold (lambda (rule x)
+                                       (cons (compile-rule rule) x))
+                                     '()
+                                   rule*)))
+             (%match      (r 'match))
+             (%else       (r 'else))
+             (%define     (r 'define)))
+         `(,%define (munch-node node buf)
+            (,%match node
+              ,@compiled-rule*
+              (,%else (error 'munch-node "could not match pattern" (selection-node-opcode node))))))))))

@@ -1,14 +1,14 @@
 
 
 (declare (unit pass)
-         (uses nodes))
+         (uses nodes munch utils))
 
 (use matchable)
 (use srfi-1)
 
 (include "class-syntax")
 
-;; do some macro processing
+;; do some macro expansion
 
 (define (expand e)
    (match e
@@ -353,6 +353,8 @@
        (lambda-free-vars-set! node
                               (diff (analyze-free-vars body) args))
        (lambda-free-vars node))
+      ((label)
+       (list))
       ((nil)
        (list))
       (else (error 'analyze-free-vars "not an AST node" node)))))
@@ -379,6 +381,11 @@
 ;; optimize application of known functions by jumping directly to the function's label instead of using the function ptr stored in the function's closure. 
 ;;
 
+#| * 1. create closure record for each lambda
+   * 2. In fix body, replace each lambda reference (those not in the operator position) with closure reference
+   * 3. rewrite lambda applications. Extract function label from closure and apply function to closure + args
+ |#
+
 (define (closure-convert-body node c-name free-vars)
   (struct-case node
     ((fix defs body)
@@ -396,8 +403,9 @@
                 form
                 (f (cdr x)
                    (cdr y)
+                   #| when making the closure record, we use a label node to represent the lambda's function ptr |#
                    (make-record
-                     (cons (make-variable (lambda-name (car x)))
+                     (cons (make-label (lambda-name (car x)))
                            (map (lambda (v) (make-variable v))
                                 (lambda-free-vars (car x))))
                      (make-variable (car y))
@@ -463,13 +471,17 @@
                       (make-variable (cdar z))
                       cexp)
                     (cdr z))))
-           (let ((name (variable-name (car x))))
-             (if (memq name free-vars)
-                 (let ((exists (assq name z)) (temp (gensym 't)))
-                   (if exists
-                       (f (cdr x) (cons (make-variable (cdr exists)) y) z)
-                       (f (cdr x) (cons (make-variable temp) y) (cons (cons name temp) z))))
-                 (f (cdr x) (cons (car x) y) z))))))
+           (struct-case (car x)
+             ((variable name)
+              (if (memq name free-vars)
+                  (let ((exists (assq name z)) (temp (gensym 't)))
+                    (if exists
+                        (f (cdr x) (cons (make-variable (cdr exists)) y) z)
+                        (f (cdr x) (cons (make-variable temp) y) (cons (cons name temp) z))))
+                  (f (cdr x) (cons (car x) y) z)))
+             ((label name)
+              (f (cdr x) (cons (car x) y) z))
+             (else (error 'closure-convert-body (car x)))))))
     ((variable name)
      (if (memq name free-vars)
          (let ((temp (gensym 't)))
@@ -484,18 +496,17 @@
        (closure-convert-body test c-name free-vars)
        (closure-convert-body conseq c-name free-vars)
        (closure-convert-body altern c-name free-vars)))
+    ((constant)
+     node)
+    ((label)
+     node)
     ((nil)
      node)
-    (else node)))
+    (else (error 'closure-convert "node" node))))
 
 (define (closure-convert node)
   (analyze-free-vars node)
   (closure-convert-body node #f '()))
-
-#| * 1. create closure record for each lambda
-   * 2. In fix body, replace each lambda reference (those not in the operator position) with closure reference
-   * 3. rewrite lambda applications. Extract function label from closure and apply function to closure + args
- |#
 
 (define (flatten node)
   (letrec ((queue (list))
@@ -541,21 +552,19 @@
       ((variable name)
        name)
       ((label name)
-       name)
+       `(label ,name))
       (else e)))
 
-  (define rti
+  (define sn
     (lambda (op . args)
-      `#(vector ,op ,@args))) 
-
-  (define basic-blocks (list))
+      (make-selection-node op args)))
 
   (define (rtl-convert-node node)
     (struct-case node
       ((select index record name cexp)
        (append
-        (let* ((t1 (rti 'ldq (* index 8) (V record)))
-               (t2 (rti 'mov t1 (V name))))
+        (let* ((t1 (sn 'ldq (V record) (* index 8)))
+               (t2 (sn 'mov t1 (V name))))
           (list t2))
         (rtl-convert-node cexp)))
       ((record values name cexp)
@@ -563,108 +572,109 @@
         (let f ((v values) (trees '()) (i 0))
           (if (null? v)
               (cons
-               (rti 'alloc (V name) (* (length values) 8)) 
+               (sn 'alloc (V name) (* (length values) 8)) 
                (reverse trees))
               (f (cdr v)
-                 (cons (rti 'stq (V (car v)) (* i 8) (V name)) trees)
+                 (cons
+                  (sn 'stq (V (car v)) (V name) (* i 8))
+                  trees)
                  (+ i 1))))
         (rtl-convert-node cexp)))
       ((app name args)
-       (list (rti 'call (V name) (map V args))))
+       (list (sn 'call (V name) (map V args)) (list)))
       ((nil)
        (list))
       ((if test conseq altern)
        (let* ((LT (convert-basic-block conseq (gensym 'L)))
               (LF (convert-basic-block altern (gensym 'L)))
-              (t1 (rti 'cmpeq (V test) (immediate-rep #f)))
-              (t2 (rti 'brc t1 LT LF)))
-         (list t2)))
+              (t1 (sn 'cmpeq (V test) (immediate-rep #f)))
+              (t2 (sn 'brc t1 `(label ,LT) `(label ,LF))))
+         (list t2 (list LT LF))))
       ((prim name args result cexp)
        (append
         (case (variable-name name)
           ((fx+)
            (match-let (((e1 e2) args))
-             (let* ((t1 (rti 'shr 2 (V e1)))
-                    (t2 (rti 'shr 2 (V e2)))
-                    (t3 (rti 'add t1 t2))
-                    (t4 (rti 'shl 2 t3))
-                    (t5 (rti 'or  *fixnum-shift* t4))
-                    (t6 (rti 'mov t5 (V result))))
+             (let* ((t1 (sn 'shr 2 (V e1)))
+                    (t2 (sn 'shr 2 (V e2)))
+                    (t3 (sn 'add t1 t2))
+                    (t4 (sn 'shl 2 t3))
+                    (t5 (sn 'or  *fixnum-shift* t4))
+                    (t6 (sn 'mov t5 (V result))))
                (list t6))))
           ((fx-)
            (match-let (((e1 e2) args))
-             (let* ((t1 (rti 'shr 2 (V e1)))
-                    (t2 (rti 'shr 2 (V e2)))
-                    (t3 (rti 'sub t1 t2))
-                    (t4 (rti 'shl 2 t3))
-                    (t5 (rti 'or  *fixnum-shift* t4))
-                    (t6 (rti 'mov t5 (V result))))
+             (let* ((t1 (sn 'shr 2 (V e1)))
+                    (t2 (sn 'shr 2 (V e2)))
+                    (t3 (sn 'sub t1 t2))
+                    (t4 (sn 'shl 2 t3))
+                    (t5 (sn 'or  *fixnum-shift* t4))
+                    (t6 (sn 'mov t5 (V result))))
                (list t6))))
           ((fx<=)
            (match-let (((e1 e2) args))
-             (let* ((t1 (rti 'shr 2 (V e1)))
-                    (t2 (rti 'shr 2 (V e2)))
-                    (t3 (rti 'cmple t1 t2))
-                    (t4 (rti 'shl *boolean-shift* t3))
-                    (t5 (rti 'or *boolean-tag* t4))
-                    (t6 (rti 'mov t5 (V result))))
+             (let* ((t1 (sn 'shr 2 (V e1)))
+                    (t2 (sn 'shr 2 (V e2)))
+                    (t3 (sn 'cmple t1 t2))
+                    (t4 (sn 'shl *boolean-shift* t3))
+                    (t5 (sn 'or *boolean-tag* t4))
+                    (t6 (sn 'mov t5 (V result))))
                (list t6))))
           ((return)
-           (list (rti 'goto 'EXIT)))
+           (list (sn 'call `(label EXIT)  '()) (list)))
           (else
-           (print name)
            (error)))
         (rtl-convert-node cexp)))
       (else (error 'rtl-convert-node node))))
-                   
+  
+  (define basic-blocks (list))
+
   (define (convert-basic-block node label)
-    (let ((basic-block (rtl-convert-node node)))
-      (set! basic-blocks
-            (cons (cons label basic-block)
-                  basic-blocks)))
-    label)
+    (match (rtl-convert-node node)
+      ((instr* ... (successor* ...))
+       (set! basic-blocks
+             (cons (list label successor* instr*)
+                  basic-blocks))
+        label)
+      (_ (error 'convert-basic-block))))
 
   (struct-case node
     ((lambda name args body free-vars)
-     (print node)
      (convert-basic-block body name)
      (make-context args (caar basic-blocks) basic-blocks))
-    (else (error rtl-convert-lambda))))
-     
+    (else (error 'rtl-convert-lambda))))
+
 (define (rtl-convert node)
   (struct-case node
     ((fix defs body)
-     (make-module
-      (map rtl-convert-lambda (cons (make-lambda 'MAIN '() body '()) defs))))
+     (let ((definitions (cons (make-lambda 'MAIN '() body '()) defs)))
+       (make-module
+        (map rtl-convert-lambda definitions))))
     (else (error 'rtl-convert node))))
-          
-(define (width x)
-  (cond
-    ;; convert a negative (and hence known to be two's-complement form) to any unsigned integer that requires the same number of bits 
-    ((< x 0)
-     (width (+ (* 2 (abs x)) 1)))
-    ((<= x #xFF) 8)
-    ((<= x #xFFFF) 16)
-    ((<= x #xFFFFFFFF) 32)
-    (else 64)))
 
-(define (i8? x)
-  (and (integer? x)
-       (= (width x) 8)))
+(define (select-instructions module)
+  (struct-case module
+    ((module contexts)
+     (make-module
+      (map select-instructions-for-context contexts)))
+    (else (error 'select-instructions))))
 
-(define (i16? x)
-  (and (integer? x)
-       (= (width x) 16)))
+(define (select-instructions-for-context context)
+  (struct-case context
+    ((context formals start blocks)
+     (make-context formals start
+       (map (lambda (block)
+              (match block
+                ((label (successors* ...) instr*)
+                 (let* ((instructions (box '())))
+                   (for-each
+                    (lambda (stm)
+                      (munch-expr stm instructions))
+                    instr*)
+                   (list label successors* (box-ref instructions))))))
+            blocks)))
+    (else (error 'select-instructions-for-context))))
 
-(define (i32? x)
-  (and (integer? x)
-       (= (width x) 32)))
-
-(define (i64? x)
-  (and (integer? x)
-       (= (width x) 64)))
-
-     
 (define *fixnum-shift*    2)
 (define *fixnum-mask*   #x3)
 (define *fixnum-tag*    #x0)
@@ -688,3 +698,9 @@
     ((null? x)
      *null-value*)
    (else (error 'immediate-rep "type not recognized"))))
+
+
+
+
+    
+ 

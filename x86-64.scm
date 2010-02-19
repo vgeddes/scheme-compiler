@@ -1,242 +1,206 @@
 
 
-(declare (unit x86-64))
-
-(use matchable)
-(use srfi-1)
-
-(include "class-syntax")
-(include "munch-syntax")
-
-(define (make-use-fold-proc op-spec)
-  (lambda (instr fun init)  
-    (fold (lambda (spec operand acc)
-            (case spec
-              ((u du)
-               (fun operand acc))
-              ((m)
-               (fun (second operand) acc))
-              (else acc)))
-          init
-          op-spec
-          (instr-operands instr))))
-
-(define (make-def-fold-proc op-spec)
-  (lambda (instr fun init)  
-    (fold (lambda (spec operand acc)
-            (case spec
-              ((d du)
-               (fun operand acc))
-              (else acc)))
-          init
-          op-spec
-          (instr-operands instr))))
-
-(define (format-operand op)
-  (match op
-   ((? integer? op)
-    (format "$~s" op))
-   ((? symbol? op)
-    (format "%~s" op))
-   (('M base offset)
-    (format "~s(%~s)" offset base))
-   (('L label)
-    (format "$~s" label))))
-
-(define (format-instr instr)
-  (apply format
-         (cons
-          (instr-descriptor-format (instr-descriptor instr))
-          (map format-operand (instr-operands instr)))))
-  
 
 ;; Instruction Definitions
 
-;; operand specs
-;; d:  variable definition         (register)
-;; u:  variable use                (register)
-;; ud: variable use and definition (register)
-;; m: memory reference             (register + offset)
-;; i: immediate                    (i8, i32 or i64)   
+;; operand flags
+;; 
+;;
 
-(instruction-info x86-64
+;; operand types
+;; i8   8-bit immediate
+;; i32  32-bit immediate
+;; i64  64-bit immediate
+;; m64  64-bit memory reference (using any addressing mode)
+;; r8   8-bit register
+;; r64  64-bit register
 
-  (call32rel32
-   (i)
-   "call ~a")
+;; operand flags
+;; in   operand used (read) by instruction
+;; out  operand mutated by instruction
+
+(define-arch-instructions x86-64
+
+  (lea64mr
+   ((m64 in) (r64 in out))
+   "leaq\t~a, ~a")
+
+  (callrel32
+   ((i32 in))
+   "call\t~a")
 
   ;; add
 
   (add64rr
-   (u du)
-   "addq ~a, ~a")
+   ((r64 in) (r64 in out))
+   "addq\t~a, ~a")
 
   (add64i8r
-   (i du)
-   "addq ~a, ~a")
+   ((i8 in) (r64 in out))
+   "addq\t~a, ~a")
 
   (add64i32r
-   (i du)
-   "addq ~a, ~a")
+   ((i32 in) (r64 in out))
+   "addq\t~a, ~a")
 
   ;; sub
 
   (sub64rr
-   (u du)
-   "subq ~a, ~a")
+   ((r64 in) (r64 in out))
+   "subq\t~a, ~a")
 
   (sub64i8r
-   (i du)
-   "subq ~a, ~a")
+   ((i8 in) (r64 in out))
+   "subq\t~a, ~a")
 
   (sub64i32r
-   (i du)
-   "subq ~a, ~a")
+   ((i32 in) (r64 in out))
+   "subq\t~a, ~a")
 
   ;; and
 
   (and64rr
-   (u du)
-   "andq ~a, ~a")
+   ((r64 in) (r64 in out))
+   "andq\t~a, ~a")
 
   (and64i8r
-   (i du)
-   "andq ~a, ~a")
+   ((i8 in) (r64 in out)) 
+   "andq\t~a, ~a")
 
   (and64i32r
-   (i du)
-   "andq ~a, ~a")
+   ((i32 in) (r64 in out))
+   "andq\t~a, ~a")
   
   ;; or
 
   (or64rr
-   (u du)
-   "orq ~a, ~a")
+   ((r64 in) (r64 in out))
+   "orq\t~a, ~a")
 
   (or64i8r
-   (i du)
-   "orq ~a, ~a")
+   ((i8 in) (r64 in out))
+   "orq\t~a, ~a")
 
   (or64i32r
-   (i du)
-   "orq ~a, ~a")
+   ((i32 in) (r64 in out))
+   "orq\t~a, ~a")
 
   ;; xor
 
   (xor64rr
-   (u du)
-   "xorq ~a, ~a")
+   ((r64 in) (r64 in out))
+   "xorq\t~a, ~a")
 
   (xor64i32r
-   (i du)
-   "xorq ~a, ~a")
+   ((i32 in) (r64 in out))
+   "xorq\t~a, ~a")
 
   ;; shr
 
   (shr64i8r
-   (i du)
-   "shrq ~a, ~a")
+   ((i8 in) (r64 in out))
+   "shrq\t~a, ~a")
 
   ;; shl
 
   (shl64i8r
-   (i du)
-   "shlq ~a, ~a")
+   ((i8 in) (r64 in out))
+   "shlq\t~a, ~a")
   
   ;; mov
 
   (mov64rr
-   (u d)
-   "movq ~a, ~a")
+   ((r64 in) (r64 out))
+   "movq\t~a, ~a")
 
   (mov64rm
-   (u m)
-   "movq ~a, ~a")
+   ((r64 in) (m64 out))
+   "movq\t~a, ~a")
 
   (mov64mr
-   (m d)
-   "movq ~a, ~a")
+   ((m64 in) (r64 out))
+   "movq\t~a, ~a")
 
   (mov64i8r
-   (i d)
-   "movq ~a, ~a")
+   ((i8 in) (r64 out))
+   "movq\t~a, ~a")
 
   (mov64i32r
-   (i d)
-   "movq ~a, ~a")
+   ((i32 in) (r64 out))
+   "movq\t~a, ~a")
 
   ;; setCC
 
   (sete8r
-   (d)
-   "sete ~a")
+   ((r8 out))
+   "sete\t~a")
 
   (setne8r
-   (d)
-   "setne ~a")
+   ((r8 out))
+   "setne\t~a")
 
   (setl8r
-   (d)
-   "setl ~a")
+   ((r8 out))
+   "setl\t~a")
 
   (setle8r
-   (d)
-   "setle ~a")
+   ((r8 out))
+   "setle\t~a")
 
   (setg8r
-   (d)
-   "setg ~a")
+   ((r8 out))
+   "setg\t~a")
 
   (setge8r
-   (d)
-   "setge ~a")
+   ((r8 out))
+   "setge\t~a")
 
   ;; cmp
 
   (cmp64rr
-   (u u)
-   "cmpq ~a, ~a")
+   ((r64 in) (r64 in))
+   "cmpq\t~a, ~a")
 
   (cmp64i8r
-   (u u)
-   "cmpq ~a, ~a")
+   ((i8 in) (r64 in))
+   "cmpq\t~a, ~a")
 
   (cmp64i32r
-   (u u)
-   "cmpq ~a, ~a")
+   ((i32 in) (r64 in))
+   "cmpq\t~a, ~a")
 
   ;; jmp
 
   (jmp64rel32
-   (i)
-   "jmp ~a")
+   (i32)
+   "jmp\t~a")
   
   (jmp64r
-   (u)
-   "jmp ~a")
+   ((r64 in))
+   "jmp\t~a")
 
   ;; jCC
 
   (je32rel32
-   (i)
-   "je ~a")
+   ((i32 in))
+   "je\t~a")
 
   (jne32rel32
-   (i)
-   "jne ~a")
+   ((i32 in))
+   "jne\t~a")
 
   (jl32rel32
-   (i)
-   "jl ~a")
+   ((i32 in))
+   "jl\t~a")
 
   (jle32rel32
-   (i)
-   "jle ~a")
+   ((i32 in))
+   "jle\t~a")
 
   (jge32rel32
-   (i)
-   "jge ~a")
+   ((i32 in))
+   "jge\t~a")
 
   (jg32rel32
-   (i)
-   "jg ~a"))
+   ((i32 in))
+   "jg\t~a"))
