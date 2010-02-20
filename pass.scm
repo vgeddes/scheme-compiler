@@ -581,7 +581,7 @@
                  (+ i 1))))
         (rtl-convert-node cexp)))
       ((app name args)
-       (list (sn 'call (V name) (map V args)) (list)))
+       (list (sn 'app (V name) (map V args)) (list)))
       ((nil)
        (list))
       ((if test conseq altern)
@@ -621,7 +621,8 @@
                     (t6 (sn 'mov t5 (V result))))
                (list t6))))
           ((return)
-           (list (sn 'call `(label EXIT)  '()) (list)))
+           (match-let (((e1) args))
+             (list (sn 'return (V e1)) (list))))
           (else
            (error)))
         (rtl-convert-node cexp)))
@@ -669,7 +670,7 @@
                  (let* ((instructions (box '())))
                    (for-each
                     (lambda (stm)
-                      (munch-expr stm instructions))
+                      (munch-statement stm instructions))
                     instr*)
                    (list label successors* (box-ref instructions))))))
             blocks)))

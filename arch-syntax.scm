@@ -28,7 +28,7 @@
                 (map (lambda (instr-def)
                        (match instr-def
                          ((name (operand-spec* ...) fmt)
-                          (generate-instr-descriptor name fmt operand-spec*))))
+                          (generate-instr-descriptor name operand-spec* fmt))))
                      instr-def*)))
              (%begin (r 'begin)))
          `(,%begin

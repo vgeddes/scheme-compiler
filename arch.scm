@@ -8,6 +8,15 @@
 (include "arch-syntax")
 (include "x86-64")
 
+
+(define mem
+  (lambda operands
+    (match operands
+      ((base-reg disp)
+       (make-x86-memref base-reg disp #f #f))
+      ((base-reg disp offset-reg scale)
+       (make-x86-memref base-reg disp offset-reg scale)))))
+
 (define (format-operand op)
   (match op
 
@@ -31,8 +40,9 @@
    (($ x86-memref base-reg disp offset-reg scale)
     (format "~s(%~s,%~s,~s)" disp base-reg offset-reg scale))
 
-   (('L label)
-    (format "~s" label))))
+   ;; pc-relative jump
+   (('label label)
+    (format "~s(%rip)" label))))
 
 (define (format-instr instr)
   (apply format
@@ -44,7 +54,7 @@
   (cdr operand-spec))
 
 (define (operand-spec-type operand-spec)
-  (cdr operand-spec))
+  (car operand-spec))
 
 ;; order of operands not preserved
 (define (filter-operands-by-flag flag operand-specs operands)
@@ -55,7 +65,6 @@
         '()
         operands
         operand-specs))
-
 
 (define (make-instr-with-descriptor descriptor operands)
   (let ((use-list (filter-operands-by-flag 'in  (instr-descriptor-operand-spec descriptor) operands))

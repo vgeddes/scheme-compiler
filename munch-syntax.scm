@@ -61,7 +61,7 @@
       (match bindings
         (() '())
         ((expr . rest)
-         (cons `(,expr (munch-expr ,(rename expr) buf)) (generate-bindings rest)))))
+         (cons `(,expr (munch-node ,(rename expr) buf)) (generate-bindings rest)))))
 
     (define (parse-temp-cls out)
       (match out
@@ -92,8 +92,8 @@
                 ((and out (not (memq out nodes-to-expand)))
                  `((,out (gensym 't))))
                 (else '()))
-               ;; bind temps to unique symbols
-               (map (lambda (temp) `(,temp (gensym 't))) temps)))
+               ;; bind temps to unique symbols (remembering not to bind 'out again if it is declared as a temp)
+               (map (lambda (temp) `(,temp (gensym 't))) (lset-difference eq? temps (list out)))))
              (%let* (r 'let*)))
         `(,pat-compiled
           (,%let* ,bindings

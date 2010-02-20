@@ -19,9 +19,31 @@
 
 (define-arch-instructions x86-64
 
+ ;; ret
+  
+  (retnear
+   (())
+   "ret")
+
+  ;; push
+
+  (push64r
+   ((r64 in))
+   "pushq\t~a")
+
+  ;; pop
+
+  (pop64r
+   ((r64 out))
+   "popq\t~a")
+
+  ;; lea
+
   (lea64mr
    ((m64 in) (r64 in out))
    "leaq\t~a, ~a")
+
+  ;; call
 
   (callrel32
    ((i32 in))

@@ -1,114 +1,122 @@
 
 (define-munch-rules
 
+  ;; call
+  
+  ((call (label target))
+   (temps) (out)
+   ((callrel32 target)))
+
+  ;;
+
   ((alloc (temp x) (i32 size))
    (temps) (out)
    ((mov64rr 'rsi x)
     (add64i32r size 'rsi)))
-
-  ;; mov
-
-  ((mov op1 (temp y))
-   (temps) (out)
-   ((mov64rr op1 y)))
   
-  ;; branch
+  ;; branch to label
   
   ((br (label x))
    (temps) (out)
-   ((jmp64rel32 x)))
+   ((jmp64rel32 `(label ,x))))
+
+  ;; branch indirect
+
+  ((br (temp x))
+   (temps) (out)
+   ((jmp64r x)))
   
   ;; branch if true
   
   ((brc op1 (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r 0 op1)
-    (jne32rel32 tl)))
+    (jne32rel32 `(label ,tl))))
 
   ;; branch if >
   
   ((brc (cmpgt (i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
-    (jg32rel32 t1)))
+    (jg32rel32 `(label ,tl))))
 
   ((brc (cmpgt (i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
-    (jg32rel32 tl)))
+    (jg32rel32 `(label ,tl))))
 
   ((brc (cmpgt op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
-    (jg32rel32 tl)))
+    (jg32rel32 `(label ,tl))))
 
   ;; branch if >=
   
   ((brc (cmpge (i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
-    (jge32rel32 tl)))
+    (jge32rel32 `(label ,tl))))
 
   ((brc (cmpge (i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
-    (jge32rel32 tl)))
+    (jge32rel32 `(label ,tl))))
 
   ((brc (cmpge op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
-    (jge32rel32 tl)))
+    (jge32rel32 `(label ,tl))))
 
   ;; branch if == 
 
   ((brc (cmpeq (i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
-    (je32rel32 tl)))
+    (je32rel32 `(label ,tl))))
   
   ((brc (cmpeq (i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
-    (je32rel32 tl)))
+    (je32rel32 `(label ,tl))))
   
   ((brc (cmpeq op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
-    (je32rel32 tl)))
+    (je32rel32 `(label ,tl))))
 
   ;; branch if < 
   
   ((brc (cmplt (i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
-    (jl32rel32 tl)))
+    (jl32rel32 `(label ,tl))))
 
   ((brc (cmplt (i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
-    (jl32rel32 tl)))
+    (jl32rel32 `(label ,tl))))
 
   ((brc (cmplt op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
-    (jl32rel32 tl)))
+    (jl32rel32 `(label ,tl))))
 
   ;; branch if <= 
   
   ((brc (cmple (i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
-    (jle32rel32 tl)))
+    (jle32rel32 `(label ,tl))))
 
   ((brc (cmple (i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
-    (jle32rel32 tl)))
+    (jle32rel32 `(label ,tl))))
 
   ((brc (cmple op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
-    (jle32rel32 tl)))
+    (jle32rel32 `(label ,tl))))
   
   ;; compare <= 
 
@@ -222,7 +230,7 @@
   
   ;; memory load
   
-  ((mov (ldq base offset) (temp x))
+  ((mov (ldq (temp base) (i32 offset)) (temp x))
    (temps) (out)
    ((mov64mr (mem base offset) x)))
 
@@ -237,6 +245,12 @@
    ((lea64mr (mem 'rip x) t1)
     (mov64rm t1 (mem base offset))))
 
+  ;; mov
+  
+  ((mov op1 (temp y))
+   (temps) (out)
+   ((mov64rr op1 y)))
+  
   ;; add
   
   ((add op1 (i32 x))

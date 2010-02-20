@@ -1,7 +1,5 @@
 
-
 objects := nodes.o pass.o compile.o munch.o arch.o liveness.o utils.o
-# macros  := class-syntax.scm munch-syntax.scm arch-syntax.scm
 
 all: scc asm-test
 

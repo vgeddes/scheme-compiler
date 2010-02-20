@@ -1,6 +1,6 @@
 
 (declare (unit liveness)
-         (uses nodes munch utils))
+         (uses nodes munch arch utils))
 
 (use matchable)
 (use srfi-1)
@@ -126,33 +126,17 @@
   (reverse (walk node)))
 
 
-(define (instr-use-fold instr fun init)
-  ((instr-descriptor-use-fold-proc (instr-descriptor instr))
-   instr fun init))
-
-(define (instr-def-fold instr fun init)
-  ((instr-descriptor-def-fold-proc (instr-descriptor instr))
-   instr fun init))
+(define (use-at node)
+  (cond
+   ((eq? (node-type node) 'block) '())
+   (else
+    (instr-use-list (node-value node)))))
 
 (define (def-at node)
   (cond
    ((eq? (node-type node) 'block) '())
    (else
-    (instr-def-fold
-     (node-value node)
-     (lambda (def acc)
-       (cons def acc))
-     '()))))
-
-(define (use-at node)
-  (cond
-   ((eq? (node-type node) 'block) '())
-   (else
-    (instr-use-fold
-     (node-value node)
-     (lambda (def acc)
-       (cons def acc))
-     '()))))
+    (instr-def-list (node-value node)))))
 
 (define (analyse-liveness context)
   (let* ((node* (sort-reverse-pre-order (context-start context)))
@@ -164,13 +148,6 @@
 
     (for-each
      (lambda (node)
-       ;; compute def/use for each node
-      ;; (cond
-     ;;   ((eq? (node-type node) 'instr)
-      ;;   (pretty-print
-      ;;    (list (format-instr (node-value node))
-      ;;        (list 'def (def-at node))              
-      ;;        (list 'use (use-at node))))))
        (vector-set! def (node-id node) (def-at node))
        (vector-set! use (node-id node) (use-at node)))
      node*)
@@ -196,6 +173,6 @@
       (lambda (block)
         (node-value block))
       (lambda (node)
-        (list (format-instr (node-value node)) (vector-ref in (node-id node))))
+        (format-instr (node-value node)))
       context)
     in))
