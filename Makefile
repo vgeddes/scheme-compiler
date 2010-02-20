@@ -1,14 +1,24 @@
 
 
 objects := nodes.o pass.o compile.o munch.o arch.o liveness.o utils.o
-macros  := class-syntax.scm munch-syntax.scm arch-syntax.scm
+# macros  := class-syntax.scm munch-syntax.scm arch-syntax.scm
 
 all: scc asm-test
 
 scc: $(objects)
 	csc -o $@ $^
 
-%.o: %.scm $(macros)
+# extra dependencies
+
+nodes.o: class-syntax.scm
+
+arch.o:  x86-64.scm arch-syntax.scm
+
+munch.o: patterns.scm munch-syntax.scm
+
+# default rule
+
+%.o: %.scm
 	csc -c $<
 
 asm-test: asm-test.o asm-test.c
@@ -18,4 +28,4 @@ asm-test.o: asm-test.nasm
 	nasm -f elf64 -g -o $@ $^ 
 
 clean:
-	-rm -rf *.o scheme asm-test
+	-rm -rf *.o scc asm-test

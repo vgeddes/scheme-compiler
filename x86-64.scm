@@ -1,6 +1,4 @@
 
-
-
 ;; Instruction Definitions
 
 ;; operand flags
