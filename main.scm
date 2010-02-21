@@ -2,7 +2,8 @@
 (declare (uses pass nodes liveness))
 
 (use matchable)
-(include "class-syntax")
+
+(include "struct-syntax")
 
 ;; (define (print-block block)
 ;;   (reverse

@@ -1,12 +1,11 @@
 
-
 (declare (unit pass)
          (uses nodes munch utils))
 
 (use matchable)
 (use srfi-1)
 
-(include "class-syntax")
+(include "struct-syntax")
 
 ;; do some macro expansion
 

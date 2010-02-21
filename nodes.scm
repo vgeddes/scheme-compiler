@@ -5,7 +5,7 @@
 
 (declare (unit nodes))
 
-(include "class-syntax")
+(include "struct-syntax")
 
 ;; HLIL: A basic lambda language
 

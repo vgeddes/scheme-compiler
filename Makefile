@@ -1,5 +1,5 @@
 
-objects := nodes.o pass.o compile.o munch.o arch.o liveness.o utils.o
+objects := nodes.o pass.o main.o munch.o arch.o liveness.o utils.o
 
 all: scc asm-test
 
@@ -8,11 +8,15 @@ scc: $(objects)
 
 # extra dependencies
 
-nodes.o: class-syntax.scm
+nodes.o: struct-syntax.scm
+main.o: struct-syntax.scm
+pass.o: struct-syntax.scm
 
 arch.o:  x86-64.scm arch-syntax.scm
 
 munch.o: patterns.scm munch-syntax.scm
+
+
 
 # default rule
 
