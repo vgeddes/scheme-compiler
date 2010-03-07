@@ -2,6 +2,7 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
+
 (define-syntax define-struct
   (syntax-rules ()
     ((define-struct name (fields ...))
@@ -21,7 +22,7 @@
            (cons `(,x (,%block-ref ,v ,i)) (generate-bindings v x* (+ i 1))))))
       (define (generate-body v clauses)
         (match clauses
-          (() (error #f "unmatched " v))
+          (() `(error 'struct-case "unmatched " ,v))
           ((('else expr expr* ...))
            `(,%begin ,expr ,@expr*))
           ((((name fields* ...) expr expr* ...) clause* ...)
@@ -36,3 +37,13 @@
          (let* ((v (gensym))
                 (body (generate-body v clause*)))
            `(,%let ((,v ,expr)) ,body)))))))
+
+(define-syntax struct-let*
+  (syntax-rules ()
+    ((struct-let* () body* ...)
+     (begin body* ...))
+    ((struct-let* ((pat v) cls* ...) body* ...)
+     (struct-case v
+       (pat
+        (struct-let* (cls* ...) body* ...))))))
+  
