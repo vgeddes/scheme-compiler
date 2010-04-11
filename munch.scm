@@ -8,11 +8,6 @@
 (include "munch-syntax")
 (include "patterns")
 
-;; closures
-
-;; rsi rdi rbp
-
-
 (define (buf-append! buf data)
   (box-set! buf (append (box-ref buf) data)))
 
@@ -29,7 +24,6 @@
   ;; Each temp will be constrained to a standard argument-passing register
   ;; Standard argument passing registers (in order): rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15 
   ;;
-  ;;
   ;; We create a selection tree for each arg so we can produce efficient code for moving the arg
   ;; to the constrained temp. This is mostly useful for immediate -> register moves.
   ;;
@@ -37,17 +31,17 @@
   ;; 
   ;; lower (app fib45 (t5 t67 3 t34)) => 
   ;;
-  ;;    movq  t5, t56         # t56 constrained to %rax
-  ;;    movq  t67, t98        # t98 constrained to %rbx
-  ;;    movq  3, t99          # t99 constrained to %rcx
-  ;;    movq  34, t102        # t102 constrained to %rdx
-  ;;    jmp   fib45(%rip)     # relative jmp to fib45
+  ;;    movq  t5,  t56     # t56 constrained to %rax
+  ;;    movq  t67, t98     # t98 constrained to %rbx
+  ;;    movq  3,   t99     # t99 constrained to %rcx
+  ;;    movq  34,  t102    # t102 constrained to %rdx
+  ;;    jmp   fib45(%rip)  # relative jmp to fib45
   ;;
-  (let* ((constrained-temps (map (lambda (arg) (gensym 't)) args))
-         (arg-tree*         (map (lambda (arg constrained-temp)
-                                  (make-selection-node 'mov (list arg constrained-temp)))
-                                args
-                                constrained-temps)))
+  (let* ((temps     (map (lambda (arg) (gensym 't)) args))
+         (arg-tree* (map (lambda (arg temp)
+                           (make-selection-node 'mov (list arg temp)))
+                         args
+                         temps)))
     
     ;; Select instructions for moving args to constrained temps
     (for-each (lambda (arg-tree)

@@ -2,6 +2,8 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
+(include "fast-match-syntax")
+
 (define-syntax buf-append
   (syntax-rules ()
    ((append-to-buf buf (production ...))
@@ -46,16 +48,20 @@
     (define (compile-pattern pat)
       (match pat
         (('i8 x)
-         `(? i8? ,x))
+         `('i8 . ,x))
+        (('i6 x)
+         `('i16 . ,x))
         (('i32 x)
-         `(? integer? ,x))
+         `('i32 . ,x))
+        (('i64 x)
+         `('i64 . ,x))
         (('label x)
          `('label ,x))
         (('temp x)
-         `(? symbol? ,x))
+         `(as ,x (? symbol?)))
         ((? symbol? x) (rename x))
-        ((opcode operand* ...)
-         `($ selection-node ',opcode ,(map compile-pattern operand*)))))
+        ((operator operand* ...)
+         `($ selection-node ',operator ,(map compile-pattern operand*)))))
 
     (define (generate-bindings bindings)
       (match bindings
@@ -103,7 +109,7 @@
     (define (compile-rule rule)
       (match rule
         ((('temp x) x)
-         `((? symbol? ,x) ,x))
+         `((as ,x (? symbol?)) ,x))
         ((pat temp-cls out-cls tmpl) 
          (generate-rule
             pat
@@ -118,10 +124,8 @@
                                        (cons (compile-rule rule) x))
                                      '()
                                    rule*)))
-             (%match      (r 'match))
+             (%match      (r 'fast-match))
              (%else       (r 'else))
              (%define     (r 'define)))
          `(,%define (munch-node node buf)
-            (,%match node
-              ,@compiled-rule*
-              (,%else (error 'munch-node "could not match pattern" (selection-node-opcode node))))))))))
+            (fast-match node ,@compiled-rule*)))))))

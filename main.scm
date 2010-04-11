@@ -99,4 +99,4 @@
         input
         (f (cdr pass) ((car pass) input)))))
 
-(print-node (compile pipeline test-code-0))
+(compile pipeline test-code-0)

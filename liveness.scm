@@ -5,7 +5,7 @@
 (use matchable)
 (use srfi-1)
 
-(include "class-syntax")
+(include "struct-syntax")
 (include "munch-syntax")
 
 (define (for-each-block fun start)
@@ -116,7 +116,7 @@
   (struct-case module
     ((module contexts)
      (let ((contexts (map build-cfg contexts)))
-       (for-each analyse-liveness contexts)
+      (for-each analyse-liveness contexts)
        (make-module contexts)))
     (else (assert-not-reached 'allocate-registers))))
 
@@ -169,10 +169,11 @@
              (vector-ref def (node-id node))))))
      node*)
 
-    (print-cfg-with-formatters
-      (lambda (block)
-        (node-value block))
-      (lambda (node)
-        (format-instr (node-value node)))
-      context)
+;;    (print-cfg-with-formatters
+;;     (lambda (block)
+;;        (node-value block))
+;;      (lambda (node)
+;;        (format-instr (node-value node)))
+;;      context)
+
     in))

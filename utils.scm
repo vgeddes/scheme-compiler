@@ -29,12 +29,13 @@
 
 ;; A generator function which produces integers which increase by 1 every time.
 
-(define (make-count-generator)
-  (let ((k 0))
-    (lambda ()
-      (let ((ret k))
-        (set! k (+ k 1))
-          ret))))
+(eval-when (load compile)
+  (define (make-count-generator)
+    (let ((k 0))
+      (lambda ()
+        (let ((ret k))
+          (set! k (+ k 1))
+          ret)))))
 
 ;; size tests  for immediates
 

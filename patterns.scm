@@ -1,4 +1,5 @@
 
+
 (define-munch-rules
 
   ;; call
@@ -32,6 +33,11 @@
    (temps) (out)
    ((cmp64i8r 0 op1)
     (jne32rel32 `(label ,tl))))
+
+  ((brc (temp '*of*) (label tl) (label fl))
+   (temps) (out)
+   ((cmp64i8r 0 op1)
+    (jo32rel32 `(label ,tl))))
 
   ;; branch if >
   
@@ -224,21 +230,38 @@
   
   ;; load immediate
   
+  ((i8 x)
+   (temps t1) (out t1)
+   ((mov64i8r x t1)))
+  
   ((i32 x)
    (temps t1) (out t1)
    ((mov64i32r x t1)))
   
   ;; memory load
   
+  ((mov (ldq (temp base) (i8 offset)) (temp x))
+   (temps) (out)
+   ((mov64mr (mem base offset) x)))
+
   ((mov (ldq (temp base) (i32 offset)) (temp x))
    (temps) (out)
    ((mov64mr (mem base offset) x)))
 
   ;; memory store
 
+  ((stq (temp x) (temp base) (i8 offset))
+   (temps) (out)
+   ((mov64rm x (mem base offset))))
+
   ((stq (temp x) (temp base) (i32 offset))
    (temps) (out)
    ((mov64rm x (mem base offset))))
+
+  ((stq (label x) (temp base) (i8 offset))
+   (temps t1) (out)
+   ((lea64mr (mem 'rip x) t1)
+    (mov64rm t1 (mem base offset))))
 
   ((stq (label x) (temp base) (i32 offset))
    (temps t1) (out)
@@ -253,6 +276,16 @@
   
   ;; add
   
+  ((add op1 (i8 x))
+   (temps t5) (out) 
+   ((mov64rr op1 t5)
+    (add64i8r x t5)))
+
+  ((add (i8 x) op2)
+   (temps t5) (out) 
+   ((mov64rr op2 t5)
+    (add64i8r x t5)))
+
   ((add op1 (i32 x))
    (temps t5) (out) 
    ((mov64rr op1 t5)
@@ -270,6 +303,16 @@
 
   ;; sub
   
+  ((sub op1 (i8 x))
+   (temps t5) (out t5) 
+   ((mov64rr op1 t5)
+    (sub64i8r x t5)))
+  
+  ((sub (i8 x) op2)
+   (temps t5) (out t5) 
+   ((mov64rr op2 t5)
+    (sub64i8r x t5)))
+
   ((sub op1 (i32 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
@@ -286,6 +329,16 @@
     (sub64rr op1 t5)))
   
   ;; and
+
+  ((and op1 (i8 x))
+   (temps t5) (out t5) 
+   ((mov64rr op1 t5)
+    (and64i8r x t5)))
+  
+  ((and (i8 x) op2)
+   (temps t5) (out t5) 
+   ((mov64rr op2 t5)
+    (and64i8r x t5)))
 
   ((and op1 (i32 x))
    (temps t5) (out t5) 
@@ -304,6 +357,16 @@
 
   ;; or
 
+  ((or op1 (i8 x))
+   (temps t5) (out t5) 
+   ((mov64rr op1 t5)
+    (or64i8r x t5)))
+  
+  ((or (i8 x) op2)
+   (temps t5) (out t5) 
+   ((mov64rr op2 t5)
+    (or64i8r x t5)))
+
   ((or op1 (i32 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
@@ -320,6 +383,16 @@
     (or64rr op1 t5)))
 
   ;; xor
+
+  ((xor op1 (i8 x))
+   (temps t5) (out t5) 
+   ((mov64rr op1 t5)
+    (xor64i8r x t5)))
+
+  ((xor (i8 x) op2)
+   (temps t5) (out t5) 
+   ((mov64rr op2 t5)
+    (xor64i8r x t5)))
 
   ((xor op1 (i32 x))
    (temps t5) (out t5) 

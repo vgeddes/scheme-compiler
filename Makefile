@@ -1,7 +1,7 @@
 
 objects := nodes.o pass.o main.o munch.o arch.o liveness.o utils.o
 
-all: scc asm-test
+all: scc tests
 
 scc: $(objects)
 	csc -o $@ $^
@@ -14,20 +14,25 @@ pass.o: struct-syntax.scm
 
 arch.o:  x86-64.scm arch-syntax.scm
 
-munch.o: patterns.scm munch-syntax.scm
-
-
+munch.o: patterns.scm munch-syntax.scm fast-match-syntax.scm
 
 # default rule
 
 %.o: %.scm
 	csc -c $<
 
+tests: test-fast-match asm-test
+
+test-fast-match: test-fast-match.scm fast-match-syntax.scm
+	csc -o $@ $<
+
 asm-test: asm-test.o asm-test.c
 	gcc -o asm-test -o $@ $^
 
 asm-test.o: asm-test.nasm
 	nasm -f elf64 -g -o $@ $^ 
+
+
 
 clean:
 	-rm -rf *.o scc asm-test

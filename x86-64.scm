@@ -14,8 +14,8 @@
 ;; r64  64-bit register
 
 ;; operand flags
-;; in   operand used (read) by instruction
-;; out  operand mutated by instruction
+;; in   operand read during instruction execution
+;; out  operand written to during instruction execution
 
 (define-arch-instructions x86-64
 
@@ -200,6 +200,14 @@
    "jmp\t~a")
 
   ;; jCC
+
+  (jo32rel32
+   ((i32 in))
+   "jo\t~a")
+
+  (jno32rel32
+   ((i32 in))
+   "jno\t~a")
 
   (je32rel32
    ((i32 in))

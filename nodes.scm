@@ -48,4 +48,5 @@
 ;; represents an x86 memory addressing mode
 (define-struct x86-memref (base-reg disp offset-reg scale))
 
-(define-struct selection-node (opcode operands))
+(define-struct selection-node (operator operands))
+
