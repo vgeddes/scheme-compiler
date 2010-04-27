@@ -7,3 +7,5 @@ test-fast-match
 asm-test
 asm-test.c
 asm-test.nasm
+docs/manual.info
+docs/manual

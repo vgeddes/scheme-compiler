@@ -1,0 +1,52 @@
+\input texinfo   @c -*-texinfo-*-
+@c %**start of header
+@setfilename manual.info
+@settitle Scheme Compiler
+@c %**end of header
+
+@copying
+This manual is for program, version version.
+
+Copyright @copyright{} years copyright-owner.
+
+@quotation
+Permission is granted to ...
+@end quotation
+@end copying
+
+@titlepage
+@title Scheme Compiler
+@author Vincent Geddes
+
+@c  The following two commands
+@c  start the copyright page.
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+
+Published by ...
+@end titlepage
+
+@c So the toc is printed at the start.
+@contents
+
+@ifnottex
+@node Top
+@top title
+
+This manual is for program, version version.
+@end ifnottex
+
+@menu
+* First:: 
+* Second:: 
+@end menu
+
+@node First
+@chapter First
+
+@node Second
+@chapter Second
+
+
+@bye
