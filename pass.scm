@@ -541,7 +541,7 @@
                        '())
                      labels)))))))
 
-(define (ssa-convert-lambda node)
+(define (ssa-convert-lambda node mod)
 
   (define (fetch node table)
     (struct-case node
@@ -556,21 +556,19 @@
        (make-ssa-global x <ssa-i64-ptr>))
       (else (assert-not-reached))))
 
-  (define (start-block name start-node pred-block table)
-    (let* ((block (ssa-make-block name)))
+  (define (start-block expr pred-block table)
+    (let* ((block (ssa-make-block (gensym) (ssa-block-function pred-block))))
       (ssa-block-pred-set! block      pred-block)
       (ssa-block-add-succ! pred-block block)
-      (walk-node start-node block (make-builder block) table)
+      (walk-node expr block table)
       block))
 
   (define (augment name node table)
     (cons (cons name node) table))
 
-
-  (define *ssa-boolean-shift* (ssa-build-const (immediate-rep value) <ssa-i8>))
-  (define *ssa-boolean-tag*   (ssa-build-const (immediate-rep value) <ssa-i8>))
-    
-
+  (define *ssa-boolean-shift* (ssa-constant-get <ssa-i8> (immediate-rep *boolean-shift*)))
+  (define *ssa-boolean-tag*   (ssa-constant-get <ssa-i8> (immediate-rep *boolean-tag* value)))
+  
   (define (convert-prim-binop op e1 e2 block table)
     (case op
       ((fx+)
@@ -632,7 +630,7 @@
               (t0     (ssa-build-inttoptr   block <ssa-ptr-i64> record))
               (t1     (ssa-build-elementptr block t0 index))
               (t2     (ssa-build-load       block t1)))
-         (walk-node cexp block build (augment (variable-name name) t2 table)))
+         (walk-node cexp block build (augment (variable-name name) t2 table))))
       ((record values name cexp)
        (let ((size (length values))
              (type (ssa-make-type-ptr (ssa-make-type-array <ssa-i64> size)))
@@ -678,15 +676,36 @@
            (else (assert-not-reached)))))))
 
   (struct-case node
-    ((lambda name args body free-vars)
-     (let* ((start (start-block name body '() '())))
-       (make-context args start)))
-    (else (assert-not-reached))))
+    ((lambda name args body)
+     (let* ((fun   (ssa-make-function (lambda-type-get (length args)) name mod))
 
+            ;; create an initial mapping table of arg-names -> ssa-nodes
+            (table (map (lambda (arg)
+                          (cons arg (ssa-make-arg <ssa-i64> fun)))))
+            (entry (ssa-make-block name fun)))
+
+       ;; set the entry block
+       (ssa-function-set-entry! fun entry)
+
+       ;; walk the lambda body
+       (walk-node body entry table)))))
+           
+
+
+(define (lambda-type-get arg-count)
+  (define (argtypes count)
+    (let f ((args '()) (count 0))
+      (if (< i arg-count)
+          (f (cons <ssa-i64> args) (+ i 1))
+          args)))
+  (ssa-type-function-get <void> (argtypes arg-count) arg-count))
+  
 (define (ssa-convert node)
   (struct-case node
     ((fix defs body)
-     (let* ((defs (cons (make-lambda 'MAIN '() body '()) defs)))
+     (let* ((mod  (ssa-make-module))
+            (defs (cons (make-lambda 'MAIN '() body '()) defs)))
+       
        (make-module
         (map ssa-convert-lambda definitions))))
     (else (assert-not-reached))))
@@ -738,11 +757,4 @@
 
 (define *null-value*    #x1)
 (define *false-value* (immediate-rep #f))
-(define *true-value*  (immediate-rep #t))
-
-
-
-
-
-    
- 
+(define *true-value*  (immediate-rep #t)) 

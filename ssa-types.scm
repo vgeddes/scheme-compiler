@@ -1,4 +1,7 @@
 
+(declare (unit ssa-types)
+         (uses utils))
+
 (define-struct ssa-type (code width points-to-type return-type param-types arg-count))
 
 (define *ssa-type-codes*

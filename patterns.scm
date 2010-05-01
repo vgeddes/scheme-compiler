@@ -34,11 +34,6 @@
    ((cmp64i8r 0 op1)
     (jne32rel32 `(label ,tl))))
 
-  ((brc (temp '*of*) (label tl) (label fl))
-   (temps) (out)
-   ((cmp64i8r 0 op1)
-    (jo32rel32 `(label ,tl))))
-
   ;; branch if >
   
   ((brc (cmpgt (i8 x) op2) (label tl) (label fl))

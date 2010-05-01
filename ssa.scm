@@ -1,10 +1,16 @@
 
+(declare (unit ssa)
+         (uses ssa-types ssa-const ssa-transforms utils))
+
 (use srfi-1)
-(use srfi-43)
+(use matchable)
 
-;; data structures 
+(import-for-syntax matchable)
 
-(define-struct ssa-context  (args start-block attrs))
+;; data structures
+
+(define-struct ssa-module   (globals functions))
+
 (define-struct ssa-node     (type code subcode in1 in2 in3 block pred succ attrs))
 
 (define-syntax ssa-node-with-attrs
@@ -12,28 +18,28 @@
     (define defaults '(type code subcode in1 in2 in3 block pred succ attrs))
     (match e
       (('ssa-node-with-attrs pair* ...)
-       `(make-ssa-node  ,@(map (lambda (attr)
+       `(make-ssa-node ,@(map (lambda (field)
                                  (cond
-                                  ((assq (car attr) pair*)
-                                   => cdr)
-                                  (else '())))
+                                  ((assq field pair*)
+                                   => cadr)
+                                  (else ''())))
                                defaults))))))
 
  
 ;; code definitions
 
 (define *ssa-code*
-  '(fun block instr var const))
+  '(fun block instr arg global const))
                      
 (define *ssa-subcode*
-  '(const local global
+  '(const
     add sub mul div and or shl shr br brc call ret ptrtoint inttoptr
     cmp
     phi
     load store
     elementptr))
 
-;; node predications (for discriminating between node classes)
+;; node predications 
 
 (define (ssa-instr? x)
   (eq? (ssa-node-code x) 'instr))
@@ -41,10 +47,19 @@
 (define (ssa-block? x)
   (eq? (ssa-node-code x) 'block))
 
-(define (ssa-atom? x)
-  (eq? (ssa-node-code x) 'atom))
+(define (ssa-function? x)
+  (eq? (ssa-node-code x) 'fun))
 
-;; operation predicates
+(define (ssa-global? x)
+  (eq? (ssa-node-code x) 'global))
+
+(define (ssa-arg? x)
+  (eq? (ssa-node-code x) 'arg))
+
+(define (ssa-const? x)
+  (eq? (ssa-node-code x) 'const))
+
+;; instr predicates
 
 (define (ssa-subcode? x subcode)
   (eq? (ssa-node-subcode x) subcode))
@@ -104,29 +119,37 @@
   (ssa-subcode? x 'elementptr))
 
 
-;; constructors 
+;; constructors
+
+;; constructor for module
+
+(define (ssa-make-module)
+  (make-ssa-module '() '()))
+  
 
 ;; constructor for block
 
-(define (ssa-make-block)
-  (make-ssa-node <ssa-label> 'block '() '() '() '() '() '()))
+(define (ssa-make-block name fun)
+  (let ((node
+         (ssa-node-with-attrs
+          (type <ssa-label>)
+          (code    'block)
+          (in3      fun)
+          (attrs   `((name . ,name))))))
+    (ssa-function-add-block! fun node)
+    node))
 
-(define (ssa-make-instr type code subcode block in attrs)
-  (let* ((in   (list->vector in))
-         (node (make-ssa-node type code subcode in block '() '() attrs)))
-    (for-each
-      (lambda (value)
-        (ssa-add-use! value node))
-      in)
-    (cond
-     ((and (null? (ssa-block-head block)) (null? (ssa-block-tail block)))
-      (ssa-block-head-set! block node)
-      (ssa-block-tail-set! block node))
-     (else 
-      (ssa-instr-next-set! (ssa-block-tail block) node)
-      (ssa-instr-prev-set! node (ssa-block-tail block))
-      (ssa-block-tail-set! block node))
-     (else (assert-not-reached)))))
+;; constructors for functions
+
+(define (ssa-make-function type name mod)
+  (let ((node
+         (ssa-node-with-attrs
+          (type  type)
+          (code  'fun)
+          (attrs `((name . ,name))))))
+    (ssa-module-add-function! mod fun)
+    node))
+
 
 ;; constructors for instuctions
 
@@ -149,11 +172,11 @@
 
 (define (ssa-make-store block value ptr)
   (ssa-node-with-attrs
-   (type  (ssa-type-void-get))
+   (type  <ssa-void>)
    (code    'instr)
    (subcode 'store)
-   (in1   value)
-   (in2   ptr)
+   (in1   ptr)
+   (in2   value)
    (block block)))
 
 (define (ssa-make-call block callconv type fun args)
@@ -168,7 +191,7 @@
 
 (define (ssa-make-ret block value)
   (ssa-node-with-attrs
-   (type  (ssa-type-void-get))
+   (type  <ssa-void>)
    (code    'instr)
    (subcode 'ret)
    (in1   value)
@@ -176,7 +199,7 @@
 
 (define (ssa-make-br block label)
  (ssa-node-with-attrs
-   (type  (ssa-type-void-get))
+   (type  <ssa-void>)
    (code 'instr)
    (subcode 'br)
    (in1   label)
@@ -184,7 +207,7 @@
 
 (define (ssa-make-brc block cond labelx labely)
  (ssa-node-with-attrs
-   (type  (ssa-type-void-get))
+   (type  <ssa-void>)
    (code 'instr)
    (subcode 'brc)
    (in1   cond)
@@ -237,24 +260,30 @@
 
 ;; constructors for atoms
 
-(define (ssa-make-global block name type)
-  (ssa-node-with-attrs
-   (type     type)
-   (code    'var)
-   (subcode 'global)
-   (in1      name)))
+(define (ssa-make-arg type fun)
+  (let ((node
+         (ssa-node-with-attrs
+          (type     type)
+          (code    'var)
+          (subcode 'arg))))
+    (ssa-function-add-arg! fun arg)
+    node))
 
-(define (ssa-make-local block name type)
-  (ssa-node-with-attrs
-   (type     type)
-   (code    'var)
-   (subcode 'local)
-   (in1      name)))
-
+(define (ssa-make-global type name is-constant initializer mod)
+  (let ((node
+         (ssa-node-with-attrs
+          (type     type)
+          (code    'var)
+          (subcode 'global)
+          (in1      name)
+          (in2      initializer)
+          (attrs    `((is-constant . ,is-constant))))))
+    (ssa-module-add-global! mod node)
+    node))
 
 ;; attrs
 
-(define (ssa-node-attr-get x attr)
+(define (ssa-node-attr x attr)
   (cond
    ((assq attr (ssa-node-attrs x))
     => cdr)
@@ -361,122 +390,170 @@
 
 ;; accessors
 
+
+;; module
+
+(define (ssa-module-add-global! mod global)
+  (ssa-module-globals-set! mod (cons global (ssa-module-globals mod))))
+
+(define (ssa-module-add-function! mod fun)
+  (ssa-module-functions-set! mod (cons fun (ssa-module-functions mod))))
+
 ;; basic
 
 (define (ssa-instr-block x)
   (assertp ssa-instr? x)
-  (vector-ref (ssa-node-in x) 0))
+  (ssa-node-block x))
 
 ;; ptr<->int casts
 
 (define (ssa-inttoptr-int x)
   (assertp ssa-inttoptr? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 (define (ssa-ptrtoint-ptr x)
   (assertp ssa-ptrtoint? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 ;; call
 
-(define (ssa-call-target x)
+(define (ssa-call-fun x)
   (assertp ssa-call? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 (define (ssa-call-args x)
   (assertp ssa-call? x)
-  (vector-ref (ssa-node-in x) 2))
+  (ssa-node-in2 x))
 
-;; ref
+;; ret
 
 (define (ssa-ret-value x)
   (assertp ssa-ret? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 ;; load
 
 (define (ssa-load-ptr x)
   (assertp ssa-ret? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 ;; store
 
 (define (ssa-store-value x)
   (assertp ssa-store? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in2 x))
 
 (define (ssa-store-ptr x)
   (assertp ssa-store? x)
-  (vector-ref (ssa-node-in x) 2))
+  (ssa-node-in1 x))
 
 ;; binops
 
 (define (ssa-binop-left x)
   (assertp ssa-instr? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 (define (ssa-binop-right x)
   (assertp ssa-instr? x)
-  (vector-ref (ssa-node-in x) 2))
+  (ssa-node-in2 x))
 
 ;; conditional branch 
 
 (define (ssa-brc-cond x)
   (assertp ssa-brc? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
-(define (ssa-brc-true-target x)
+(define (ssa-brc-labelx x)
   (assertp ssa-brc? x)
-  (vector-ref (ssa-node-in x) 2))
+  (ssa-node-in2 x))
 
-(define (ssa-brc-false-target x)
+(define (ssa-brc-labely x)
   (assertp ssa-brc? x)
-  (vector-ref (ssa-node-in x) 3))
+  (ssa-node-in3 x))
 
 ;; unconditional branch 
 
-(define (ssa-br-cond x)
+(define (ssa-br-label x)
   (assertp ssa-br? x)
-  (vector-ref (ssa-node-in x) 1))
-
-(define (ssa-br-target x)
-  (assertp ssa-br? x)
-  (vector-ref (ssa-node-in x) 2))
+  (ssa-node-in1 x))
 
 ;; elementptr
 
 (define (ssa-elementpr-ptr x)
   (assertp ssa-elementptr? x)
-  (vector-ref (ssa-node-in x) 1))
+  (ssa-node-in1 x))
 
 (define (ssa-elementpr-offset x)
   (assertp ssa-elementptr? x)
-  (vector-ref (ssa-node-in x) 2))
+  (ssa-node-in2 x))
 
 ;; function
 
 (define (ssa-function-name x)
   (assertp ssa-function? x)
-  (ssa-node-attr-get x 'name))
+  (ssa-node-attr x 'name))
 
-(define (ssa-function-start x)
+(define (ssa-function-entry x)
   (assertp ssa-function? x)
-  (vector-ref (ssa-node-in x) 0))
+  (ssa-node-in1 x))
 
+(define (ssa-function-entry-set! x entry)
+  (assertp ssa-function? x)
+  (ssa-node-in1-set! x entry))
+
+(define (ssa-function-args x)
+  (assertp ssa-function? x)
+  (ssa-node-in2 x))
+
+(define (ssa-function-args-set! x args)
+  (assertp ssa-function? x)
+  (ssa-node-in2-set! x args))
+
+(define (ssa-function-add-arg! x block)
+   (assertp ssa-function? x)
+   (ssa-function-args-set! x (cons args (ssa-function-args x))))
+
+(define (ssa-function-blocks x)
+  (assertp ssa-function? x)
+  (ssa-node-in3 x))
+
+(define (ssa-function-blocks-set! x blocks)
+  (assertp ssa-function? x)
+  (ssa-node-in3-set! x blocks))
+
+(define (ssa-function-add-block! x block)
+   (assertp ssa-function? x)
+   (ssa-function-blocks-set! x (cons block (ssa-function-blocks x))))
 
 ;; block
 
 (define (ssa-block-name x)
   (assertp ssa-block? x)
-  (ssa-block-name x))
+  (ssa-node-attr x 'name))
 
 (define (ssa-block-head x)
   (assertp ssa-block? x)
-  (ssa-node-head x))
+  (ssa-node-in1 x))
+
+(define (ssa-block-head-set! x head)
+  (assertp ssa-block? x)
+  (ssa-node-in1-set! x head))
 
 (define (ssa-block-tail x)
   (assertp ssa-block? x)
-  (ssa-node-tail x))
+  (ssa-node-in2 x))
+
+(define (ssa-block-tail-set! x tail)
+  (assertp ssa-block? x)
+  (ssa-node-in2-set! x tail))
+
+(define (ssa-block-function x)
+  (assertp ssa-block? x)
+  (ssa-node-block x))
+
+(define (ssa-block-function-set! x fun)
+  (assertp ssa-block? x)
+  (ssa-node-block-set! x fun))
 
 (define (ssa-block-pred x)
   (assertp ssa-block? x)
@@ -496,123 +573,17 @@
   (assertp ssa-instr? x)
   (ssa-node-succ x))
 
-;; constant
 
-(define (ssa-const-value x)
-  (assertp ssa-const? x)
-  (first (ssa-node-attrs x)))
-
-;; local variable (function parameter)
-
-(define (ssa-local-name x)
-  (assertp ssa-local? x)
-  (first (ssa-node-attrs x)))
+;; function argument
 
 ;; global variable (compile-time static variable)
 
 (define (ssa-global-name x)
   (assertp ssa-global? x)
-  (first (ssa-node-attrs x)))
+  (ssa-node-attr x 'name))
 
 
 (define-syntax assertp
   (syntax-rules ()
     ((assertp pred x)
      (assert (pred x) "invalid type"))))
-  
-
-;; block traversal
-
-(define (ssa-for-each-block f context)
-  (let ((start ((ssa-context-start-block context))))
-    (let walk ((x start))
-      (begin
-        (f x)
-        (for-each walk (ssa-block-succ x))))))
-
-(define (ssa-for-each-block-succ f block)
-  (for-each f (ssa-block-succ block)))
-
-(define (ssa-for-each-block-pred f block)
-  (f (ssa-block-pred block)))
-
-
-;; instruction traversal operations
-
-(define (ssa-fold-instr f nil block)
-  (let ((head ((ssa-block-head block))))
-    (let walk ((x head) (nil nil))
-      (cond
-       ((null? x) nil)
-       (else (walk (ssa-instr-next x) (f x nil)))))))
-
-(define (ssa-for-each-instr f block)
-  (fold-instr (lambda (instr nil)
-                (f instr))
-              block))
-
-;; def-use traversal
-
-(define (ssa-add-use! node x)
-  (ssa-node-uses-set! node (cons x (ssa-node-uses node))))
-
-(define (ssa-remove-use! node x)
-  (ssa-node-uses-set! node (delete eq? x (ssa-node-uses node))))
-
-(define (ssa-for-each-use f instr)
-  (for-each f (ssa-node-uses instr)))
-
-(define (ssa-for-each-def f user)
-  (vector-for-each f (ssa-node-in user)))
-
-;; deletion
-
-(define (ssa-delete-instr instr)
-  (let ((block (ssa-instr-block instr))
-        (next  (ssa-instr-next instr))
-        (prev  (ssa-instr-prev instr)))
-    (cond
-     ((not (null? next))
-      (ssa-instr-next-set! prev next))
-    (cond
-     ((not (null? prev))
-      (ssa-instr-prev-set! next prev)))
-    (cond
-     ((null? prev)
-      (ssa-block-head-set! next)))
-    (cond
-     ((null? next)
-      (ssa-block-tail-set! prev))))))
-
-;; Replaces all uses of `value` with `x`. 
-(define (ssa-replace-all-uses-with! value x)
-  (ssa-for-each-use
-   (lambda (user)
-     (ssa-node-in-set!
-      (vector-map (lambda (x)
-                    (cond
-                     ((eq? x from)
-                      (ssa-add-use! to user)
-                      to)
-                     (else from)))
-                  (ssa-node-in user))))
-   value)
-  (ssa-node-uses-set! value '()))
-  
-;; Replaces all uses of `value` in `user` with `x`. 
-(define (ssa-replace-uses-of! user from to)
-  (ssa-node-in-set!
-   (vector-map (lambda (x)
-                 (cond
-                  ((eq? x from)
-                   (ssa-remove-use! from user)
-                   (ssa-add-use! to user)
-                   to)
-                  (else from)))
-               (ssa-node-in user))))   
-
-;; Replaces `instr` with `x`
-(define (ssa-replace-instr! instr x)
-  (ssa-replace-all-uses-with! instr value)
-  (ssa-delete-instr! instr))
-

@@ -1,4 +1,7 @@
 
+(declare (unit ssa-const)
+         (uses utils))
+
 ;; raw constructor
 
 (define (ssa-make-const type value)
@@ -50,4 +53,11 @@
       (let ((const (ssa-make-const type value)))
         (set! *ssa-i64-pool* (cons (cons value const) *ssa-i64-pool*))
         const))))))
-              
+
+
+
+;; accessor
+
+(define (ssa-const-value x)
+  (assertp ssa-const? x)
+  (first (ssa-node-attrs x)))
