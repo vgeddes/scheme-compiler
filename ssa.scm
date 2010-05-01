@@ -5,16 +5,25 @@
 ;; data structures 
 
 (define-struct ssa-context  (args start-block attrs))
-(define-struct ssa-type     (code width points-to-type element-type size)) 
-(define-struct ssa-node     (type code subcode in block pred succ attrs))
+(define-struct ssa-node     (type code subcode in1 in2 in3 block pred succ attrs))
 
+(define-syntax ssa-node-with-attrs
+  (lambda (e r c)
+    (define defaults '(type code subcode in1 in2 in3 block pred succ attrs))
+    (match e
+      (('ssa-node-with-attrs pair* ...)
+       `(make-ssa-node  ,@(map (lambda (attr)
+                                 (cond
+                                  ((assq (car attr) pair*)
+                                   => cdr)
+                                  (else '())))
+                               defaults))))))
+
+ 
 ;; code definitions
 
-(define *ssa-type-codes*
-  '(void label integer pointer array function))
-
 (define *ssa-code*
-  '(block instr atom))
+  '(fun block instr var const))
                      
 (define *ssa-subcode*
   '(const local global
@@ -23,71 +32,6 @@
     phi
     load store
     elementptr))
-
-;; type hierarchy 
-
-;; core types
-(define <ssa-void>     (ssa-make-type-void))
-(define <ssa-i1>       (ssa-make-type-integer 'i1))
-(define <ssa-i8>       (ssa-make-type-integer 'i8))
-(define <ssa-i16>      (ssa-make-type-integer 'i16))
-(define <ssa-i32>      (ssa-make-type-integer 'i32))
-(define <ssa-i64>      (ssa-make-type-integer 'i64))
-(define <ssa-ptr-i32>  (ssa-make-type-pointer <ssa-i32>))
-(define <ssa-ptr-i64>  (ssa-make-type-pointer <ssa-i64>))
-(define <ssa-label>    (ssa-make-type-label))
-
-;; type constructors
-
-(define (ssa-make-type-void)
-  (make-ssa-type 'void '() '() '() '() '() '() '()))
-
-(define (ssa-make-type-label)
-  (make-ssa-type 'label '() '() '() '() '() '() '()))
-
-(define (ssa-make-type-integer width)
-  (make-ssa-type 'integer width '() '() '() '() '() '()))
-
-(define (ssa-make-type-pointer points-to-type)
-  (make-ssa-type 'pointer '() points-to-type '() '() '() '() '()))
-
-(define (ssa-make-type-array element-type size)
-  (make-ssa-type 'array '() '() element-type size '() '() '()))
-
-(define (ssa-make-type-function return-type param-types arg-count)
-  (make-ssa-type 'function '() '() '() '() return-type param-types arg-count))
-
-;; type accessors
-
-(define (ssa-type-integer-width x)
-  (ssa-type-width x))
-
-(define (ssa-type-pointer-points-to-type x)
-  (ssa-type-points-to-type x))
-
-(define (ssa-type-array-element-width x)
-  (ssa-type-element-width x))
-
-(define (ssa-type-array-size x)
-  (ssa-type-size x))
-
-;; type predicates
-
-(define (ssa-type-code? x code)
-  (eq? (ssa-type-code x) code))
-
-(define (ssa-type-integer? x)
-  (ssa-type-code? x 'integer))
-
-(define (ssa-type-pointer? x)
-  (ssa-type-code? x 'pointer))
-
-(define (ssa-type-void? x)
-  (ssa-type-code? x 'void))
-
-(define (ssa-type-array? x)
-  (ssa-type-code? x 'array))
-
 
 ;; node predications (for discriminating between node classes)
 
@@ -186,61 +130,126 @@
 
 ;; constructors for instuctions
 
-(define (ssa-make-binop block subcode x y)
-  (let ((type (infer-type x y)))
-    (ssa-make-node type 'instr subcode block (list x y) '())))
-
+(define (ssa-make-binop block subcode type x y)
+  (ssa-node-with-attrs
+   (type type)
+   (code    'instr)
+   (subcode  subcode)
+   (in1  x)
+   (in2  y)
+   (block block)))
+   
 (define (ssa-make-load block ptr)
-  (let ((type (infer-type ptr)))
-    (ssa-make-node type 'instr 'load block (list ptr) '())))
+  (ssa-node-with-attrs
+   (type  (ssa-type-pointer-points-to-type ptr))
+   (code    'instr)
+   (subcode 'load)
+   (in1   ptr)
+   (block block)))
 
 (define (ssa-make-store block value ptr)
-  (let ((type 'void))
-    (ssa-make-node type 'instr 'store block (list value ptr) '())))
+  (ssa-node-with-attrs
+   (type  (ssa-type-void-get))
+   (code    'instr)
+   (subcode 'store)
+   (in1   value)
+   (in2   ptr)
+   (block block)))
 
-(define (ssa-make-call block callconv type target args)
-  (ssa-make-node type 'instr 'call block (cons target args) `((callconv . ,callconv))))
+(define (ssa-make-call block callconv type fun args)
+  (ssa-node-with-attrs
+   (type  type)
+   (code 'instr)
+   (subcode 'call)
+   (in1   fun)
+   (in2   args)
+   (block block)
+   (attrs `((callconv . ,callconv)))))
 
 (define (ssa-make-ret block value)
-  (let ((type (infer-type value)))
-    (ssa-make-node type 'instr 'ret block (list value) '())))
+  (ssa-node-with-attrs
+   (type  (ssa-type-void-get))
+   (code    'instr)
+   (subcode 'ret)
+   (in1   value)
+   (block block)))
 
-(define (ssa-make-br block target)
-  (ssa-make-node 'void 'instr 'br block (list target) '()))
+(define (ssa-make-br block label)
+ (ssa-node-with-attrs
+   (type  (ssa-type-void-get))
+   (code 'instr)
+   (subcode 'br)
+   (in1   label)
+   (block block)))
 
-(define (ssa-make-brc block cond block-true block-false)
-  (ssa-make-node 'void 'instr 'brc block (list cond block-true block-false) '()))
+(define (ssa-make-brc block cond labelx labely)
+ (ssa-node-with-attrs
+   (type  (ssa-type-void-get))
+   (code 'instr)
+   (subcode 'brc)
+   (in1   cond)
+   (in2   labelx)
+   (in3   labely)
+   (block block)))
 
 (define (ssa-make-phi block in)
-  (let ((type (infer-type value)))
-    (ssa-make-node type 'instr 'phi block in '())))
+ (ssa-node-with-attrs
+   (type  (ssa-node-type (car in)))
+   (code    'instr)
+   (subcode 'phi)
+   (in1   in)
+   (block block)))
 
 (define (ssa-make-elementptr block ptr index)
-  (let ((type (infer-type ptr)))
-    (ssa-make-node type 'instr 'elementptr block (list ptr index) '())))
+ (ssa-node-with-attrs
+   (type  (ssa-node-type ptr))
+   (code    'instr)
+   (subcode 'elementptr)
+   (in1   ptr)
+   (in2   index)
+   (block block)))
 
 (define (ssa-make-inttoptr block type value)
-  (ssa-make-node type 'instr 'inttoptr block (list value) '()))
+ (ssa-node-with-attrs
+   (type  type)
+   (code    'instr)
+   (subcode 'inttoptr)
+   (in1   value)
+   (block block)))
 
 (define (ssa-make-ptrtoint block type ptr)
-  (ssa-make-node type 'instr 'ptrtoint block (list ptr) '()))
+ (ssa-node-with-attrs
+   (type  type)
+   (code    'instr)
+   (subcode 'ptrtoint)
+   (in1   ptr)
+   (block block)))
 
 (define (ssa-make-cmp block test x y)
-  (ssa-make-node type 'instr 'cmp block (cons target args) `((test . ,test))))
+ (ssa-node-with-attrs
+   (type   <ssa-i1>)
+   (code    'instr)
+   (subcode 'cmp)
+   (in1   test)
+   (in2   x)
+   (in3   y)
+   (block block)))
 
 ;; constructors for atoms
 
-(define (ssa-make-const value type)
-  (ssa-make-node type 'atom 'const '() '() `((value . ,value))))
+(define (ssa-make-global block name type)
+  (ssa-node-with-attrs
+   (type     type)
+   (code    'var)
+   (subcode 'global)
+   (in1      name)))
 
-(define (ssa-make-global name type)
-  (ssa-make-node type 'atom 'global '() '() `((name . ,name))))
-
-(define (ssa-make-local name type)
-  (ssa-make-node type 'atom 'local '() '() `((name . ,name))))
-
-
-
+(define (ssa-make-local block name type)
+  (ssa-node-with-attrs
+   (type     type)
+   (code    'var)
+   (subcode 'local)
+   (in1      name)))
 
 
 ;; attrs
@@ -251,7 +260,7 @@
     => cdr)
    (else '())))
 
-;; aliases
+;; builders
 
 (define ssa-build-block      ssa-make-block)
 
@@ -268,32 +277,89 @@
 (define ssa-build-global     ssa-make-global)
 
 (define (ssa-build-add block x y)
-  (ssa-make-binop block 'add x y))
+  (cond
+   ((and (ssa-constant? x) (ssa-constant? y))
+    (ssa-fold-add x y))
+   (else (ssa-make-binop block 'add (ssa-node-type x) x y))))
 
 (define (ssa-build-sub block x y)
-  (ssa-make-binop block 'sub x y))
+  (cond
+   ((and (ssa-constant? x) (ssa-constant? y))
+    (ssa-fold-sub x y))
+   (else (ssa-make-binop block 'sub (ssa-node-type x) x y))))
 
 (define (ssa-build-mul block x y)
-  (ssa-make-binop block 'mul x y))
-
-(define (ssa-build-div block x y)
-  (ssa-make-binop block 'div x y))
+  (cond
+   ((and (ssa-constant? x) (ssa-constant? y))
+    (ssa-fold-mul x y))
+   (else (ssa-make-binop block 'mul (ssa-node-type x) x y))))
 
 (define (ssa-build-and block x y)
-  (ssa-make-binop block 'and x y))
+  (cond
+   ((and (ssa-constant? x) (ssa-constant? y))
+    (ssa-fold-and x y))
+  (else (ssa-make-binop block 'and (ssa-node-type x) x y))))
 
 (define (ssa-build-or block x y)
-  (ssa-make-binop block 'or x y))
+ (cond
+  ((and (ssa-constant? x) (ssa-constant? y))
+   (ssa-fold-or x y))  
+  (else (ssa-make-binop block 'or (ssa-node-type x) x y))))
 
 (define (ssa-build-xor block x y)
-  (ssa-make-binop block 'xor x y))
+ (cond
+  ((and (ssa-constant? x) (ssa-constant? y))
+   (ssa-fold-xor x y))    
+  (else (ssa-make-binop block 'xor (ssa-node-type x) x y))))
 
 (define (ssa-build-shr block x y)
-  (ssa-make-binop block 'shr x y))
+  (cond
+   ((and (ssa-constant? x) (ssa-constant? y))
+    (ssa-fold-shr x y))    
+   (else (ssa-make-binop block 'shr (ssa-node-type x) x y))))
 
 (define (ssa-build-shl block x y)
-  (ssa-make-binop block 'shl x y))
+  (cond
+   ((and (ssa-constant? x) (ssa-constant? y))
+    (ssa-fold-shl x y))    
+   (else (ssa-make-binop block 'shl (ssa-node-type x) x y))))
 
+;; folders
+
+(define (ssa-fold-add x y)
+  (let ((value (+ (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-sub x y)
+  (let ((value (- (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-mul x y)
+  (let ((value (* (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-and x y)
+  (let ((value (bitwise-and (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-or x y)
+  (let ((value (bitwise-ior (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-xor x y)
+  (let ((value (bitwise-xor (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-shr x y)
+  (let ((value (arithmetic-shift (ssa-const-value x) (ssa-const-value y))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+(define (ssa-fold-shl x y)
+  (let ((value (arithmetic-shift (ssa-const-value x) (- 0 (ssa-const-value y)))))
+    (ssa-constant-get (ssa-node-type x) value)))
+
+
+;; accessors
 
 ;; basic
 
@@ -550,7 +616,3 @@
   (ssa-replace-all-uses-with! instr value)
   (ssa-delete-instr! instr))
 
-
-;; infer types
-
-(define ssa-infer-types (
