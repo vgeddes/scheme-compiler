@@ -63,8 +63,6 @@
      ((block label code)
       `(block ,label ,code))
      (else (error 'write-sexp "not an AST node" node)))))
-
-
  
 (define test-code-0
   '(let ((fib (lambda (n f)
@@ -89,7 +87,7 @@
     basic-lambda-lift
     closure-convert
     flatten
-    rtl-convert
+    ssa-convert
     select-instructions
     allocate-registers))
 

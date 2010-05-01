@@ -4,8 +4,7 @@
 
 ;; raw constructor
 
-(define (ssa-make-const type value)
-  (ssa-make-node type 'atom 'const '() '() `((value . ,value))))
+
 
 ;; constant pool
 
@@ -60,4 +59,4 @@
 
 (define (ssa-const-value x)
   (assertp ssa-const? x)
-  (first (ssa-node-attrs x)))
+  (first (ssa-node-in1 x)))

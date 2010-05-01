@@ -1,6 +1,6 @@
 
 (declare (unit pass)
-         (uses nodes munch utils))
+         (uses nodes ssa munch utils))
 
 (use matchable)
 (use srfi-1)
@@ -691,7 +691,6 @@
        (walk-node body entry table)))))
            
 
-
 (define (lambda-type-get arg-count)
   (define (argtypes count)
     (let f ((args '()) (count 0))
@@ -705,10 +704,9 @@
     ((fix defs body)
      (let* ((mod  (ssa-make-module))
             (defs (cons (make-lambda 'MAIN '() body '()) defs)))
-       
-       (make-module
-        (map ssa-convert-lambda definitions))))
-    (else (assert-not-reached))))
+        (for-each (lambda (def)
+                    (ssa-convert-lambda def mod))
+                  defs)))))
 
 (define (select-instructions module)
   (struct-case module

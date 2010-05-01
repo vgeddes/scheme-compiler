@@ -7,6 +7,8 @@
 
 (import-for-syntax matchable)
 
+(include "struct-syntax")
+
 ;; data structures
 
 (define-struct ssa-module   (globals functions))
@@ -264,8 +266,7 @@
   (let ((node
          (ssa-node-with-attrs
           (type     type)
-          (code    'var)
-          (subcode 'arg))))
+          (code    'arg))))
     (ssa-function-add-arg! fun arg)
     node))
 
@@ -280,6 +281,14 @@
           (attrs    `((is-constant . ,is-constant))))))
     (ssa-module-add-global! mod node)
     node))
+
+;; constructor for const
+(define (ssa-make-const type value)
+  (ssa-node-with-attrs
+   (type     type)
+   (code    'const)
+   (in1      value)))
+ 
 
 ;; attrs
 
@@ -302,8 +311,6 @@
 (define ssa-build-call       ssa-make-call)
 (define ssa-build-ret        ssa-make-ret)
 (define ssa-build-const      ssa-make-const)
-(define ssa-build-local      ssa-make-local)
-(define ssa-build-global     ssa-make-global)
 
 (define (ssa-build-add block x y)
   (cond
