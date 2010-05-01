@@ -1,0 +1,12 @@
+Another Scheme Compiler
+
+Design
+======
+
+* CPS HL-IR
+* SSA LL-IR
+* Code generator emits x86-64
+* Graph-colouring register allocator (TODO)
+
+Written in Scheme!
+
