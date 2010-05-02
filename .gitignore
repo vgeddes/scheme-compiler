@@ -1,6 +1,7 @@
 *.o
 *.png
 *.dot
+*.tar.gz
 scc
 test-fast-match
 docs/manual.info

@@ -542,7 +542,7 @@
                      labels)))))))
 
 (define (ssa-convert-lambda node mod)
-
+  
   (define (fetch node table)
     (struct-case node
       ((constant value)
@@ -553,7 +553,7 @@
          => cdr)
         (else (assert-not-reached))))
       ((label name)
-       (ssa-module-global-get <ssa-i64-ptr> name))
+       (ssa-module-value-get mod name))
       (else (assert-not-reached))))
 
   (define (start-block expr pred-block table)
@@ -623,6 +623,15 @@
          t3))
       (else (assert-not-reached))))
 
+  (define (emit-stores values recptr block)
+    (let f ((values values) (i 0))
+      (match values
+        (() '())
+        ((v . v*)
+         (let* ((ptr (ssa-build-elementptr block recptr i))
+                (st  (ssa-build-store      block v ptr)))
+           (f v* (+ i 1)))))))
+  
   (define (walk-node node block table)
     (struct-case node
       ((select index record name cexp)
@@ -630,46 +639,37 @@
               (t0     (ssa-build-inttoptr   block <ssa-ptr-i64> record))
               (t1     (ssa-build-elementptr block t0 index))
               (t2     (ssa-build-load       block t1)))
-         (walk-node cexp block build (augment (variable-name name) t2 table))))
+         (walk-node cexp block (augment (variable-name name) t2 table))))
       ((record values name cexp)
-       (let ((size (ssa-constant-get <ssa-i32> (length values)))
-             (t0   (ssa-build-call block 'cdecl <ssa-ptr-i64> *__scm_alloc* (list size))))
-         (let f ((values (map (lambda (value)
-                                (fetch value table))
-                              values))
-                 (i 0))
-           (match values
-             (() '())
-             ((v . vs)
-              (let ((ptr (ssa-build-elementptr block t0 i))
-                    (st  (ssa-build-store      block v ptr)))
-                (f vs (+ i 1))))))
-         (let ((t2 (ssa-build-cast block <ssa-i64> t1))) 
-           (walk-node cexp block build (augment (variable-name name) t2 table)))))
+       (let* ((size (ssa-constant-get <ssa-i32> (length values)))
+              (t0   (ssa-build-call block 'cdecl (ssa-module-value-get mod '__scm_alloc) (list size)))
+              (*    (emit-stores (map (lambda (v) (fetch v table)) values) t0 block))
+              (t1   (ssa-build-ptrtoint block <ssa-i64> t0)))
+         (walk-node cexp block (augment (variable-name name) t1 table))))
       ((app name args)
        (let* ((target (fetch name table))
               (args (map (lambda (arg)
                            (fetch arg table))
                          args)))
-          (ssa-build-call block 'tail <void> target args)))
+          (ssa-build-call block 'tail target args)))
       ((nil) '())
       ((if test conseq altern)
        (let* ((test (fetch test table))
               (block1 (start-block conseq block table))
               (block2 (start-block altern block table))
-              (t1 (ssa-build-cmp 'eq test *false-value*))
-              (t2 (ssa-build-brc t1 block1 block2)))
+              (t1 (ssa-build-cmp block 'eq test *false-value*))
+              (t2 (ssa-build-brc block t1 block1 block2)))
          '()))
       ((prim name args result cexp)
        (let ((name   (variable-name name))
              (result (variable-name result)))
          (case name
            ((fx+ fx- fx* fx<= fx>= fx< fx> fx=)
-            (let ((result-node (convert-prim-binop name (first args) (second args) block build table)))            
-              (walk-node cexp block build (augment result result-node table))))
+            (let ((result-node (convert-prim-binop name (first args) (second args) block table)))            
+              (walk-node cexp block (augment result result-node table))))
            ((return)
             (let* ((e1 (fetch (first args) table))
-                   (t1 (ssa-build-ret e1)))
+                   (t1 (ssa-build-ret block e1)))
               '()))
            (else (assert-not-reached)))))))
 
@@ -679,38 +679,55 @@
 
             ;; create an initial mapping table of arg-names -> ssa-nodes
             (table (map (lambda (arg)
-                          (cons arg (ssa-make-arg <ssa-i64> fun)))))
+                          (cons arg (ssa-make-arg <ssa-i64> fun)))
+                          args))
             (entry (ssa-make-block name fun)))
 
        ;; set the entry block
-       (ssa-function-set-entry! fun entry)
+       (ssa-function-entry-set! fun entry)
 
        ;; walk the lambda body
        (walk-node body entry table)))))
            
 
+(define (list-of x count)
+  (let f ((lst '()) (i 0))
+    (if (< i count)
+        (f (cons x lst) (+ i 1))
+        lst)))
+
 (define (lambda-type-get arg-count)
-  (define (argtypes count)
-    (let f ((args '()) (i 0))
-      (if (< i count)
-          (f (cons <ssa-i64> args) (+ i 1))
-          args)))
-  (ssa-type-function-get <ssa-void> (argtypes arg-count) arg-count))
+  (ssa-type-function-get <ssa-void> (list-of <ssa-i64> arg-count) arg-count))
 
 ;; add external function proto's to module
 (define (prepare-module mod)
   ;; __scm_alloc
-  (let ((type (ssa-type-function-get <ssa-ptr-i64> (list <ssa-i32>) 1))
-        (fun  (ssa-make-function type '__scm_alloc mod)))))
+  (let* ((type (ssa-type-function-get <ssa-ptr-i64> (list <ssa-i32>) 1))
+         (fun  (ssa-make-function type '__scm_alloc mod)))
+    '()))
 
 (define (ssa-convert node)
   (struct-case node
     ((fix defs body)
      (let* ((mod  (ssa-make-module))
             (defs (cons (make-lambda 'MAIN '() body '()) defs)))
-        (for-each (lambda (def)
-                    (ssa-convert-lambda def mod))
-                  defs)))))
+
+       (prepare-module mod)
+       
+       ;; create function declaration for each definition
+       (for-each (lambda (def)
+                   (struct-case def
+                    ((lambda name args body)
+                     (let* ((arg-count (length args))
+                            (type      (ssa-type-function-get <ssa-void> (list-of <ssa-i64> arg-count) arg-count))
+                            (fun       (ssa-make-function type name mod)))
+                       '()))))
+                 defs)
+
+       ;; no convert the definitions into function bodies
+       (for-each (lambda (def)
+                   (ssa-convert-lambda def mod))
+                 defs)))))
 
 (define (select-instructions module)
   (struct-case module

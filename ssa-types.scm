@@ -2,6 +2,8 @@
 (declare (unit ssa-types)
          (uses utils))
 
+(use matchable)
+
 (include "struct-syntax")
 
 (define-struct ssa-type (code width points-to-type return-type param-types arg-count))
@@ -78,7 +80,7 @@
     => cdr)
    (else
     (let ((type (ssa-make-type-function return-type param-types arg-count)))
-      (set! *ssa-functions* (cons (list return-type param-types arg-count) *ssa-functions*))
+      (set! *ssa-functions* (cons (cons (list return-type param-types arg-count) type) *ssa-functions*))
       type))))
 
 ;; type accessors
@@ -88,6 +90,10 @@
 
 (define (ssa-type-pointer-points-to-type x)
   (ssa-type-points-to-type x))
+
+
+(define (ssa-type-function-return-type x)
+  (ssa-type-return-type x))
 
 ;; type predicates
 

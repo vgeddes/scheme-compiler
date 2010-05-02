@@ -87,9 +87,9 @@
     basic-lambda-lift
     closure-convert
     flatten
-    ssa-convert
-    select-instructions
-    allocate-registers))
+    ssa-convert))
+   ;; select-instructions
+   ;; allocate-registers))
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))

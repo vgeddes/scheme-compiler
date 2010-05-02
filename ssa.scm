@@ -9,9 +9,15 @@
 
 (include "struct-syntax")
 
+
+(define-syntax assertp
+  (syntax-rules ()
+    ((assertp pred x)
+     (assert (pred x) "invalid type"))))
+
 ;; data structures
 
-(define-struct ssa-module   (globals functions))
+(define-struct ssa-module   (globals functions symtab))
 
 (define-struct ssa-node     (type code subcode in1 in2 in3 block pred succ attrs))
 
@@ -58,7 +64,7 @@
 (define (ssa-arg? x)
   (eq? (ssa-node-code x) 'arg))
 
-(define (ssa-const? x)
+(define (ssa-constant? x)
   (eq? (ssa-node-code x) 'const))
 
 ;; instr predicates
@@ -126,7 +132,7 @@
 ;; constructor for module
 
 (define (ssa-make-module)
-  (make-ssa-module '() '()))
+  (make-ssa-module '() '() '()))
   
 
 ;; constructor for block
@@ -136,7 +142,7 @@
          (ssa-node-with-attrs
           (type <ssa-label>)
           (code    'block)
-          (in3      fun)
+          (block    fun)
           (attrs   `((name . ,name))))))
     (ssa-function-add-block! fun node)
     node))
@@ -166,7 +172,7 @@
    
 (define (ssa-make-load block ptr)
   (ssa-node-with-attrs
-   (type  (ssa-type-pointer-points-to-type ptr))
+   (type  (ssa-type-pointer-points-to-type (ssa-node-type ptr)))
    (code    'instr)
    (subcode 'load)
    (in1   ptr)
@@ -181,9 +187,9 @@
    (in2   value)
    (block block)))
 
-(define (ssa-make-call block callconv type fun args)
+(define (ssa-make-call block callconv fun args)
   (ssa-node-with-attrs
-   (type  type)
+   (type  (ssa-type-function-return-type (ssa-node-type fun)))
    (code 'instr)
    (subcode 'call)
    (in1   fun)
@@ -267,7 +273,7 @@
          (ssa-node-with-attrs
           (type     type)
           (code    'arg))))
-    (ssa-function-add-arg! fun arg)
+    (ssa-function-add-arg! fun node)
     node))
 
 (define (ssa-make-global type name is-constant initializer mod)
@@ -290,7 +296,7 @@
    (in1      value)))
  
 
-;; attrs
+;; node attributes
 
 (define (ssa-node-attr x attr)
   (cond
@@ -298,6 +304,14 @@
     => cdr)
    (else '())))
 
+(define (ssa-node-attr-set! x attr value)
+  (cond
+   ((assq attr (ssa-node-attrs x))
+    => (lambda (cell)
+         (set-cdr! cell value)))
+   (else
+    (ssa-node-attrs-set! x (cons (cons attr value) (ssa-node-attrs x))))))
+  
 ;; builders
 
 (define ssa-build-block      ssa-make-block)
@@ -310,7 +324,9 @@
 (define ssa-build-elementptr ssa-make-elementptr)
 (define ssa-build-call       ssa-make-call)
 (define ssa-build-ret        ssa-make-ret)
-(define ssa-build-const      ssa-make-const)
+(define ssa-build-cmp        ssa-make-cmp)
+(define ssa-build-br         ssa-make-br)
+(define ssa-build-brc        ssa-make-brc)
 
 (define (ssa-build-add block x y)
   (cond
@@ -400,11 +416,19 @@
 
 ;; module
 
-(define (ssa-module-add-global! mod global)
-  (ssa-module-globals-set! mod (cons global (ssa-module-globals mod))))
+(define (ssa-module-add-global! mod globl)
+  (ssa-module-symtab-set! mod (cons (cons (ssa-global-name global) global) (ssa-module-symtab mod)))
+  (ssa-module-globals-set! mod (cons globl (ssa-module-globals mod))))
 
 (define (ssa-module-add-function! mod fun)
+  (ssa-module-symtab-set! mod (cons (cons (ssa-function-name fun) fun) (ssa-module-symtab mod)))
   (ssa-module-functions-set! mod (cons fun (ssa-module-functions mod))))
+
+(define (ssa-module-value-get mod name)
+  (cond
+   ((assq name (ssa-module-symtab mod))
+    => cdr)
+   (else '())))
 
 ;; basic
 
@@ -516,9 +540,9 @@
   (assertp ssa-function? x)
   (ssa-node-in2-set! x args))
 
-(define (ssa-function-add-arg! x block)
+(define (ssa-function-add-arg! x arg)
    (assertp ssa-function? x)
-   (ssa-function-args-set! x (cons args (ssa-function-args x))))
+   (ssa-function-args-set! x (cons arg (ssa-function-args x))))
 
 (define (ssa-function-blocks x)
   (assertp ssa-function? x)
@@ -531,6 +555,14 @@
 (define (ssa-function-add-block! x block)
    (assertp ssa-function? x)
    (ssa-function-blocks-set! x (cons block (ssa-function-blocks x))))
+
+(define (ssa-function-is-declaration? x)
+  (assertp ssa-function? x)
+  (ssa-node-attr x 'is-declaration))
+
+(define (ssa-function-is-definition? x)
+  (assertp ssa-function? x)
+  (ssa-node-attr x 'is-definition))
 
 ;; block
 
@@ -566,9 +598,21 @@
   (assertp ssa-block? x)
   (ssa-node-pred x))
 
+(define (ssa-block-pred-set! x pred)
+  (assertp ssa-block? x)
+  (ssa-node-pred-set! x pred))
+
 (define (ssa-block-succ x)
   (assertp ssa-block? x)
   (ssa-node-succ x))
+
+(define (ssa-block-succ-set! x succ)
+  (assertp ssa-block? x)
+  (ssa-node-succ-set! x succ))
+
+(define (ssa-block-add-succ! x block)
+   (assertp ssa-block? x)
+   (ssa-block-succ-set! x (cons block (ssa-block-succ x))))
 
 ;; instr
 
@@ -589,8 +633,3 @@
   (assertp ssa-global? x)
   (ssa-node-attr x 'name))
 
-
-(define-syntax assertp
-  (syntax-rules ()
-    ((assertp pred x)
-     (assert (pred x) "invalid type"))))
