@@ -546,14 +546,14 @@
   (define (fetch node table)
     (struct-case node
       ((constant value)
-       (ssa-build-const (immediate-rep value) <ssa-i64>))
+       (ssa-constant-get <ssa-i64> (immediate-rep value)))
       ((variable name)
        (cond
         ((assq name table)
          => cdr)
         (else (assert-not-reached))))
       ((label name)
-       (make-ssa-global x <ssa-i64-ptr>))
+       (ssa-module-global-get <ssa-i64-ptr> name))
       (else (assert-not-reached))))
 
   (define (start-block expr pred-block table)
@@ -567,7 +567,7 @@
     (cons (cons name node) table))
 
   (define *ssa-boolean-shift* (ssa-constant-get <ssa-i8> (immediate-rep *boolean-shift*)))
-  (define *ssa-boolean-tag*   (ssa-constant-get <ssa-i8> (immediate-rep *boolean-tag* value)))
+  (define *ssa-boolean-tag*   (ssa-constant-get <ssa-i8> (immediate-rep *boolean-tag*)))
   
   (define (convert-prim-binop op e1 e2 block table)
     (case op
@@ -632,10 +632,8 @@
               (t2     (ssa-build-load       block t1)))
          (walk-node cexp block build (augment (variable-name name) t2 table))))
       ((record values name cexp)
-       (let ((size (length values))
-             (type (ssa-make-type-ptr (ssa-make-type-array <ssa-i64> size)))
-             (t0   (ssa-build-call block 'cdecl <ssa-ptr-i64> *__scm_alloc* (list size)))
-             (t1   (ssa-build-cast block type t0)))
+       (let ((size (ssa-constant-get <ssa-i32> (length values)))
+             (t0   (ssa-build-call block 'cdecl <ssa-ptr-i64> *__scm_alloc* (list size))))
          (let f ((values (map (lambda (value)
                                 (fetch value table))
                               values))
@@ -643,7 +641,7 @@
            (match values
              (() '())
              ((v . vs)
-              (let ((ptr (ssa-build-elementptr block t1 i))
+              (let ((ptr (ssa-build-elementptr block t0 i))
                     (st  (ssa-build-store      block v ptr)))
                 (f vs (+ i 1))))))
          (let ((t2 (ssa-build-cast block <ssa-i64> t1))) 
@@ -693,12 +691,18 @@
 
 (define (lambda-type-get arg-count)
   (define (argtypes count)
-    (let f ((args '()) (count 0))
-      (if (< i arg-count)
+    (let f ((args '()) (i 0))
+      (if (< i count)
           (f (cons <ssa-i64> args) (+ i 1))
           args)))
-  (ssa-type-function-get <void> (argtypes arg-count) arg-count))
-  
+  (ssa-type-function-get <ssa-void> (argtypes arg-count) arg-count))
+
+;; add external function proto's to module
+(define (prepare-module mod)
+  ;; __scm_alloc
+  (let ((type (ssa-type-function-get <ssa-ptr-i64> (list <ssa-i32>) 1))
+        (fun  (ssa-make-function type '__scm_alloc mod)))))
+
 (define (ssa-convert node)
   (struct-case node
     ((fix defs body)

@@ -1,4 +1,7 @@
 
+PACKAGE := scc
+VERSION := 0.1
+
 objects := nodes.o pass.o main.o munch.o arch.o liveness.o utils.o ssa.o ssa-const.o ssa-types.o ssa-transforms.o
 
 all: scc tests
@@ -33,6 +36,16 @@ asm-test: asm-test.o asm-test.c
 
 asm-test.o: asm-test.nasm
 	nasm -f elf64 -g -o $@ $^ 
+
+dist: tarball
+
+dist-prep:
+	rm -rf $(PACKAGE)-$(VERSION)
+	mkdir $(PACKAGE)-$(VERSION)
+	cp -a *.scm Makefile README docs tests $(PACKAGE)-$(VERSION)
+
+tarball: dist-prep
+	tar -czf $(PACKAGE)-$(VERSION).tar.gz $(PACKAGE)-$(VERSION)
 
 clean:
 	-rm -rf *.o scc asm-test

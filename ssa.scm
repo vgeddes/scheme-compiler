@@ -149,7 +149,7 @@
           (type  type)
           (code  'fun)
           (attrs `((name . ,name))))))
-    (ssa-module-add-function! mod fun)
+    (ssa-module-add-function! mod node)
     node))
 
 
