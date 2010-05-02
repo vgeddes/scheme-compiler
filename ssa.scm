@@ -40,8 +40,7 @@
   '(fun block instr arg global const))
                      
 (define *ssa-subcode*
-  '(const
-    add sub mul div and or shl shr br brc call ret ptrtoint inttoptr
+  '(add sub mul div and or shl shr br brc call ret ptrtoint inttoptr
     cmp
     phi
     load store
@@ -380,6 +379,7 @@
 
 (define (ssa-fold-add x y)
   (let ((value (+ (ssa-const-value x) (ssa-const-value y))))
+    (print  (ssa-constant-get (ssa-node-type x) value))
     (ssa-constant-get (ssa-node-type x) value)))
 
 (define (ssa-fold-sub x y)
@@ -404,10 +404,12 @@
 
 (define (ssa-fold-shr x y)
   (let ((value (arithmetic-shift (ssa-const-value x) (ssa-const-value y))))
+    (print  (ssa-constant-get (ssa-node-type x) value))
     (ssa-constant-get (ssa-node-type x) value)))
 
 (define (ssa-fold-shl x y)
   (let ((value (arithmetic-shift (ssa-const-value x) (- 0 (ssa-const-value y)))))
+    (print  (ssa-constant-get (ssa-node-type x) value))
     (ssa-constant-get (ssa-node-type x) value)))
 
 

@@ -2,6 +2,12 @@
 (declare (unit ssa-const)
          (uses utils))
 
+
+(define-syntax assertp
+  (syntax-rules ()
+    ((assertp pred x)
+     (assert (pred x) "invalid type"))))
+
 ;; raw constructor
 
 
@@ -58,5 +64,5 @@
 ;; accessor
 
 (define (ssa-const-value x)
-  (assertp ssa-const? x)
-  (first (ssa-node-in1 x)))
+  (assertp ssa-constant? x)
+  (ssa-node-in1 x))
