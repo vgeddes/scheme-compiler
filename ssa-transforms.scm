@@ -2,14 +2,20 @@
 (declare (unit ssa-transforms)
          (uses ssa))
 
+;; function traversal
+
+(define (ssa-for-each-function f mod)
+  (let ((funcs (ssa-module-functions f)))
+    (for-each f funcs)))
+
 ;; block traversal
 
-(define (ssa-for-each-block f context)
-  (let ((start ((ssa-context-start-block context))))
-    (let walk ((x start))
+(define (ssa-for-each-block f fun)
+  (let ((entry ((ssa-function-entry fun))))
+    (let walk ((x entry))
       (begin
         (f x)
-        (for-each walk (ssa-block-succ x))))))
+        (ssa-for-each-block-succ walk x)))))
 
 (define (ssa-for-each-block-succ f block)
   (for-each f (ssa-block-succ block)))
@@ -28,9 +34,10 @@
        (else (walk (ssa-instr-next x) (f x nil)))))))
 
 (define (ssa-for-each-instr f block)
-  (fold-instr (lambda (instr nil)
-                (f instr))
-              block))
+  (ssa-fold-instr (lambda (instr nil)
+                    (f instr))
+                  '()
+                  block))
 
 ;; def-use traversal
 
