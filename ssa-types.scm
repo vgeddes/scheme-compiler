@@ -9,7 +9,7 @@
 (define-struct ssa-type (code width points-to-type return-type param-types arg-count))
 
 (define *ssa-type-codes*
-  '(void label integer pointer array function))
+  '(void label integer pointer function))
 
 ;; raw type constructors
 
@@ -108,3 +108,25 @@
 
 (define (ssa-type-void? x)
   (ssa-type-code? x 'void))
+
+(define (ssa-type-label? x)
+  (ssa-type-code? x 'label))
+
+;; formatting
+
+(define (ssa-format-type x)
+  (cond
+   ((ssa-type-void? x) "void")
+   ((ssa-type-integer? x)
+    (case (ssa-type-integer-width x)
+      ((1)   "i1")
+      ((8)   "i8")
+      ((16) "i16")
+      ((32) "i32")
+      ((64) "i64")))
+   ((ssa-type-label? x) "label")
+   ((ssa-type-pointer? x)
+    (format "~a*" (ssa-type-pointer-points-to-type x)))
+   (else (assert-not-reached))))
+      
+      

@@ -23,21 +23,15 @@
 (define (ssa-for-each-block-pred f block)
   (f (ssa-block-pred block)))
 
-
 ;; instruction traversal operations
 
-(define (ssa-fold-instr f nil block)
-  (let ((head ((ssa-block-head block))))
-    (let walk ((x head) (nil nil))
-      (cond
-       ((null? x) nil)
-       (else (walk (ssa-instr-next x) (f x nil)))))))
-
 (define (ssa-for-each-instr f block)
-  (ssa-fold-instr (lambda (instr nil)
-                    (f instr))
-                  '()
-                  block))
+  (let ((head (ssa-block-head block)))
+    (let walk ((x head))
+      (cond
+       ((not (null? x)) 
+        (f x)
+        (walk (ssa-instr-next x)))))))
 
 ;; def-use traversal
 
@@ -104,3 +98,42 @@
   (ssa-replace-all-uses-with! instr value)
   (ssa-delete-instr! instr))
 
+(define (ssa-for-each-def f user)
+  (slot1 user)
+  
+  (cond
+   ((ssa-add? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-sub? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-mul? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-and? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-or? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-xor? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-shl? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-shr? user)
+    (f (ssa-binop-left  user))
+    (f (ssa-binop-right user)))
+   ((ssa-br? user)
+    (f (ssa-br-label   user)))
+   ((ssa-brc? user)
+    (f (ssa-brc-cond   user))
+    (f (ssa-brc-labelx user))
+    (f (ssa-brc-labely user)))
+   ((ssa-elementptr? user)
+    (f (ssa-br-label   user)))
+
+
+   

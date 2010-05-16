@@ -542,6 +542,7 @@
                      labels)))))))
 
 (define (ssa-convert-lambda node mod)
+  (print (ssa-module-symtab mod))
   
   (define (fetch node table)
     (struct-case node

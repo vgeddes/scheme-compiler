@@ -161,3 +161,4 @@
  (eq? 
   (test-fast-match-6 (make-point (list 1 'bar) 3))
   'bar))
+
