@@ -32,7 +32,7 @@
   ((brc op1 (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r 0 op1)
-    (jne32rel32 `(label ,tl))))
+   (jne32rel32 `(label ,tl))))
 
   ;; branch if >
   

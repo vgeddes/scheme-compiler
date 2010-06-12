@@ -2,7 +2,7 @@
 PACKAGE := scc
 VERSION := 0.1
 
-objects := nodes.o pass.o main.o munch.o arch.o liveness.o utils.o ssa.o ssa-const.o ssa-types.o ssa-transforms.o
+objects := nodes.o pass.o main.o munch.o arch.o liveness.o utils.o ssa.o ssa-const.o ssa-ops.o ssa-types.o ssa-transforms.o
 
 tests_bin = tests/test-fast-match
 
