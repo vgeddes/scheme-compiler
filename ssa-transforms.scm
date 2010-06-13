@@ -11,11 +11,13 @@
 ;; block traversal
 
 (define (ssa-for-each-block f fun)
-  (let ((entry ((ssa-function-entry fun))))
-    (let walk ((x entry))
-      (begin
-        (f x)
-        (ssa-for-each-block-succ walk x)))))
+  (define (visit-block block f)
+    (let ((succ (ssa-block-succ block)))
+      (f block)
+      (for-each (lambda (succ)
+                  (visit-block succ f))
+                succ)))
+    (visit-block (ssa-function-entry fun) f))
 
 (define (ssa-for-each-block-succ f block)
   (for-each f (ssa-block-succ block)))

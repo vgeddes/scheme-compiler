@@ -8,12 +8,9 @@
     ((assertp pred x)
      (assert (pred x) "invalid type"))))
 
-;; raw constructor
-
-
-
 ;; constant pool
 
+(define *ssa-i1-pool*  '())
 (define *ssa-i8-pool*  '())
 (define *ssa-i16-pool* '())
 (define *ssa-i32-pool* '())

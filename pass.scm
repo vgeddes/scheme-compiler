@@ -542,7 +542,6 @@
                      labels)))))))
 
 (define (ssa-convert-lambda node mod)
-  (print (ssa-module-symtab mod))
   
   (define (fetch node table)
     (struct-case node
@@ -629,7 +628,7 @@
       (match values
         (() '())
         ((v . v*)
-         (let* ((ptr (ssa-build-elementptr block recptr i))
+         (let* ((ptr (ssa-build-elementptr block recptr (ssa-constant-get <ssa-i32> i)))
                 (st  (ssa-build-store      block v ptr)))
            (f v* (+ i 1)))))))
   
@@ -638,7 +637,7 @@
       ((select index record name cexp)
        (let* ((record (fetch record table))
               (t0     (ssa-build-inttoptr   block <ssa-ptr-i64> record))
-              (t1     (ssa-build-elementptr block t0 index))
+              (t1     (ssa-build-elementptr block t0 (ssa-constant-get <ssa-i32> index)))
               (t2     (ssa-build-load       block t1)))
          (walk-node cexp block (augment (variable-name name) t2 table))))
       ((record values name cexp)
@@ -652,13 +651,13 @@
               (args (map (lambda (arg)
                            (fetch arg table))
                          args)))
-          (ssa-build-call block 'tail target args)))
+         (ssa-build-call block 'tail target args)))
       ((nil) '())
       ((if test conseq altern)
        (let* ((test (fetch test table))
               (block1 (start-block conseq block table))
               (block2 (start-block altern block table))
-              (t1 (ssa-build-cmp block 'eq test *false-value*))
+              (t1 (ssa-build-cmp block 'eq test (ssa-constant-get <ssa-i64> *false-value*)))
               (t2 (ssa-build-brc block t1 block1 block2)))
          '()))
       ((prim name args result cexp)
@@ -676,7 +675,7 @@
 
   (struct-case node
     ((lambda name args body)
-     (let* ((fun   (ssa-make-function (lambda-type-get (length args)) name mod))
+     (let* ((fun   (ssa-module-value-get mod name))
 
             ;; create an initial mapping table of arg-names -> ssa-nodes
             (table (map (lambda (arg)
@@ -705,6 +704,8 @@
   ;; __scm_alloc
   (let* ((type (ssa-type-function-get <ssa-ptr-i64> (list <ssa-i32>) 1))
          (fun  (ssa-make-function type '__scm_alloc mod)))
+    (ssa-node-attr-set! fun 'is-declaration #t)
+    (ssa-node-attr-set! fun 'is-definition #f)
     '()))
 
 (define (ssa-convert node)
@@ -722,13 +723,19 @@
                      (let* ((arg-count (length args))
                             (type      (ssa-type-function-get <ssa-void> (list-of <ssa-i64> arg-count) arg-count))
                             (fun       (ssa-make-function type name mod)))
+                       (ssa-node-attr-set! fun 'is-declaration #f)
+                       (ssa-node-attr-set! fun 'is-definition #t)
                        '()))))
                  defs)
 
        ;; no convert the definitions into function bodies
        (for-each (lambda (def)
                    (ssa-convert-lambda def mod))
-                 defs)))))
+                 defs)
+
+       (ssa-module-print mod (current-output-port))
+       
+       ))))
 
 (define (select-instructions module)
   (struct-case module

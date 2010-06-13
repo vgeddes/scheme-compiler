@@ -1,6 +1,6 @@
 
 (declare (unit ssa)
-         (uses ssa-types ssa-ops ssa-const ssa-transforms utils))
+         (uses extras ssa-types ssa-ops ssa-const ssa-transforms utils))
 
 (use srfi-1)
 (use srfi-13)
@@ -188,15 +188,18 @@
           (in1   ptr)
           (in2   value)
           (block block))))
-    (ssa-block-add-instr! block node)))
+    (ssa-block-add-instr! block node)
+    node))
 
-(define (ssa-make-call block callconv fun args)
+(define (ssa-make-call block callconv target args)
   (let ((node
          (ssa-node-with-attrs
-          (type   (ssa-type-function-return-type (ssa-node-type fun)))
+          (type   (if (ssa-function? target)
+                      (ssa-type-function-return-type (ssa-node-type target))
+                      <ssa-void>))
           (tag   'instr)
-          (op    <ssa-op-store>)
-          (in1    fun)
+          (op    <ssa-op-call>)
+          (in1    target)
           (in2    args)
           (block  block)
           (attrs `((callconv . ,callconv))))))
@@ -362,49 +365,49 @@
   (cond
    ((and (ssa-constant? x) (ssa-constant? y))
     (ssa-fold-add x y))
-   (else (ssa-make-binop block 'add (ssa-node-type x) x y))))
+   (else (ssa-make-binop block <ssa-op-add> (ssa-node-type x) x y))))
 
 (define (ssa-build-sub block x y)
   (cond
    ((and (ssa-constant? x) (ssa-constant? y))
     (ssa-fold-sub x y))
-   (else (ssa-make-binop block 'sub (ssa-node-type x) x y))))
+   (else (ssa-make-binop block <ssa-op-sub> (ssa-node-type x) x y))))
 
 (define (ssa-build-mul block x y)
   (cond
    ((and (ssa-constant? x) (ssa-constant? y))
     (ssa-fold-mul x y))
-   (else (ssa-make-binop block 'mul (ssa-node-type x) x y))))
+   (else (ssa-make-binop block <ssa-op-mul> (ssa-node-type x) x y))))
 
 (define (ssa-build-and block x y)
   (cond
    ((and (ssa-constant? x) (ssa-constant? y))
     (ssa-fold-and x y))
-  (else (ssa-make-binop block 'and (ssa-node-type x) x y))))
+  (else (ssa-make-binop block <ssa-op-and> (ssa-node-type x) x y))))
 
 (define (ssa-build-or block x y)
  (cond
   ((and (ssa-constant? x) (ssa-constant? y))
    (ssa-fold-or x y))  
-  (else (ssa-make-binop block 'or (ssa-node-type x) x y))))
+  (else (ssa-make-binop block <ssa-op-or> (ssa-node-type x) x y))))
 
 (define (ssa-build-xor block x y)
  (cond
   ((and (ssa-constant? x) (ssa-constant? y))
    (ssa-fold-xor x y))    
-  (else (ssa-make-binop block 'xor (ssa-node-type x) x y))))
+  (else (ssa-make-binop block <ssa-op-xor> (ssa-node-type x) x y))))
 
 (define (ssa-build-shr block x y)
   (cond
    ((and (ssa-constant? x) (ssa-constant? y))
     (ssa-fold-shr x y))    
-   (else (ssa-make-binop block 'shr (ssa-node-type x) x y))))
+   (else (ssa-make-binop block <ssa-op-shr> (ssa-node-type x) x y))))
 
 (define (ssa-build-shl block x y)
   (cond
    ((and (ssa-constant? x) (ssa-constant? y))
     (ssa-fold-shl x y))    
-   (else (ssa-make-binop block 'shl (ssa-node-type x) x y))))
+   (else (ssa-make-binop block <ssa-op-shl> (ssa-node-type x) x y))))
 
 ;; module
 
@@ -422,23 +425,36 @@
     => cdr)
    (else '())))
 
+(define (ssa-module-print mod port)
+  (for-each
+   (lambda (fun)
+     (ssa-function-print fun port)
+     (fprintf port "\n"))
+   (ssa-module-functions mod)))
 
 ;; polymorphic instructions
 
 (define (ssa-instr-iterate-uses f x)
-  (ssa-op-iterate-uses (ssa-node-op x) f x))
+  ((ssa-op-iterate-uses (ssa-node-op x)) f x))
 
 (define (ssa-instr-replace-uses f x)
-  (ssa-op-replace-uses (ssa-node-op x) f x))
+  ((ssa-op-replace-uses (ssa-node-op x)) f x))
 
 (define (ssa-instr-list-uses f x)
-  (ssa-op-list-uses (ssa-node-op x) x))
+  ((ssa-op-list-uses (ssa-node-op x)) x))
 
-(define (ssa-instr-format x)
-  (ssa-op-format (ssa-node-op x) x))
+(define (ssa-instr-print x port)
+  (cond
+   ((ssa-type-void? (ssa-node-type x))
+    (fprintf port "  ~a\n"
+             ((ssa-op-format (ssa-node-op x)) x)))
+   (else
+    (fprintf port "  ~a = ~a\n"
+             (ssa-format-value x)
+             ((ssa-op-format (ssa-node-op x)) x)))))
 
 (define (ssa-instr-constant-fold x)
-  (ssa-op-constant-fold (ssa-node-op x) x))
+  ((ssa-op-constant-fold (ssa-node-op x)) x))
 
 ;; basic
 
@@ -511,7 +527,48 @@
 
 (define (ssa-function-is-definition? x)
   (assertp ssa-function? x)
-  (ssa-node-attr x 'is-definition))
+  (and (ssa-node-attr x 'is-definition)
+       (not (null? (ssa-function-entry x)))))
+  
+(define (ssa-function-print x port)
+
+  (define (format-param-list params param-types)
+    (string-join
+     (map (lambda (param param-type)
+            (format "~a ~a" (ssa-format-type param-type) (ssa-format-value param)))
+          params param-types)
+     ", "))
+  
+  (define (print-declaration name params ret-type param-types port)
+    (fprintf port "~a\n" (ssa-format-type ret-type))
+    (fprintf port "@~a (~a)\n" name (format-param-list params param-types)))     
+  
+  (define (print-body x port)
+    (fprintf port "{\n")
+    (ssa-for-each-block
+     (lambda (block)
+       (ssa-block-print block port))
+     x)
+    (fprintf port "}\n"))
+  
+  (cond
+   ((ssa-function-is-definition? x)
+    (print-declaration
+     (ssa-function-name x)
+     (ssa-function-args x)
+     (ssa-type-function-return-type (ssa-node-type x))
+     (ssa-type-function-param-types (ssa-node-type x))
+     port)
+    (print-body x port))
+   ((ssa-function-is-declaration? x)
+    (print-declaration
+     (ssa-function-name x)
+     (ssa-function-args x)
+     (ssa-type-function-return-type (ssa-node-type x))
+     (ssa-type-function-param-types (ssa-node-type x))
+     port))
+   (else (assert-not-reached))))
+ 
 
 ;; block
 
@@ -573,6 +630,15 @@
     (ssa-instr-prev-set! instr (ssa-block-tail x))
     (ssa-block-tail-set! x instr)))
   instr)
+
+(define (ssa-block-print x port)
+  (fprintf port "~a:\n" (ssa-block-name x))
+  (ssa-for-each-instr
+   (lambda (instr)
+     (ssa-instr-print instr port))
+   x))
+    
+ 
 
 ;; global variable (compile-time static variable)
 

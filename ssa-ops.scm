@@ -7,7 +7,13 @@
 
 (include "struct-syntax")
 
-(define-struct ssa-op (name print foldable constant-fold iterate-uses replace-uses list-uses))
+
+(define-syntax assertp
+  (syntax-rules ()
+    ((assertp pred x)
+     (assert (pred x) "invalid type"))))
+
+(define-struct ssa-op (name format foldable constant-fold iterate-uses replace-uses list-uses))
 
 ;; folders
 
@@ -72,7 +78,7 @@
 (define (ssa-temp-name node)
   (cond
    ((ssa-node-attr node 'temp-name)
-    => cdr)
+    => (lambda (a) a))
    (else
     (ssa-node-attr-set! node 'temp-name (gensym 't))
     (ssa-node-attr node 'temp-name))))
@@ -90,7 +96,7 @@
    ((ssa-arg? x)
     (format "%~a" (ssa-temp-name x)))
    ((ssa-constant? x)
-    (format "~a" (ssa-constant-value x)))
+    (format "~a" (ssa-const-value x)))
    (else (assert-not-reached))))
 
 ;; binops
@@ -123,35 +129,35 @@
   (list (ssa-binop-left x)
         (ssa-binop-right x)))
 
-(define (ssa-format-binop fmt node)
-  (format fmt
+(define (ssa-binop-format fmt node)
+  (sprintf fmt
     (ssa-format-type  (ssa-node-type (ssa-binop-left node)))
     (ssa-format-value (ssa-binop-left node))
     (ssa-format-value (ssa-binop-right node))))
 
-(define (ssa-format-add node)
-  (ssa-format-binop "add ~a ~a, ~a" node))
+(define (ssa-add-format node)
+  (ssa-binop-format "add ~a ~a, ~a" node))
 
-(define (ssa-format-sub node)
-  (ssa-format-binop "sub ~a ~a, ~a" node))
+(define (ssa-sub-format node)
+  (ssa-binop-format "sub ~a ~a, ~a" node))
 
-(define (ssa-format-mul node)
-  (ssa-format-binop "mul ~a ~a, ~a" node))
+(define (ssa-mul-format node)
+  (ssa-binop-format "mul ~a ~a, ~a" node))
 
-(define (ssa-format-and node)
-  (ssa-format-binop "and ~a ~a, ~a" node))
+(define (ssa-and-format node)
+  (ssa-binop-format "and ~a ~a, ~a" node))
 
-(define (ssa-format-or node)
-  (ssa-format-binop "or ~a ~a, ~a" node)) 
+(define (ssa-or-format node)
+  (ssa-binop-format "or ~a ~a, ~a" node)) 
 
-(define (ssa-format-xor node)
-  (ssa-format-binop "xor ~a ~a, ~a" node)) 
+(define (ssa-xor-format node)
+  (ssa-binop-format "xor ~a ~a, ~a" node)) 
 
-(define (ssa-format-shl node)
-  (ssa-format-binop "shl ~a ~a, ~a" node)) 
+(define (ssa-shl-format node)
+  (ssa-binop-format "shl ~a ~a, ~a" node)) 
 
-(define (ssa-format-shr node)
-  (ssa-format-binop "shr ~a ~a, ~a" node)) 
+(define (ssa-shr-format node)
+  (ssa-binop-format "shr ~a ~a, ~a" node)) 
 
 ;; cast
 
@@ -176,7 +182,7 @@
 (define (ssa-cast-list-uses x)
   (list (ssa-cast-value x)))
 
-(define (ssa-format-cast node)
+(define (ssa-cast-format node)
   (format "cast ~a ~a"
           (ssa-format-type  (ssa-node-type node))
           (ssa-format-value (ssa-cast-value node))))
@@ -204,7 +210,7 @@
 (define (ssa-ptrtoint-list-uses x)
   (list (ssa-ptrtoint-value x)))
 
-(define (ssa-format-ptrtoint node)
+(define (ssa-ptrtoint-format node)
   (format "ptrtoint ~a ~a"
           (ssa-format-type  (ssa-node-type node))
           (ssa-format-value (ssa-ptrtoint-value node))))
@@ -232,7 +238,7 @@
 (define (ssa-inttoptr-list-uses x)
   (list (ssa-inttoptr-value x)))
 
-(define (ssa-format-inttoptr node)
+(define (ssa-inttoptr-format node)
   (format "inttoptr ~a ~a"
           (ssa-format-type  (ssa-node-type node))
           (ssa-format-value (ssa-inttoptr-value node))))
@@ -266,7 +272,7 @@
 (define (ssa-call-list-uses f x)
   (cons (ssa-call-fun x) (ssa-call-args x)))
 
-(define (ssa-format-call node)
+(define (ssa-call-format node)
   (format "call ~a ~a (~a)"
           (ssa-format-type  (ssa-node-type node))
           (ssa-format-value (ssa-call-fun node))
@@ -295,7 +301,7 @@
 (define (ssa-ret-list-uses x)
   (list (ssa-ret-value x)))
 
-(define (ssa-format-ret node)
+(define (ssa-ret-format node)
   (format "ret ~a"
           (ssa-format-value (ssa-ret-value node))))
 
@@ -318,7 +324,7 @@
 (define (ssa-load-list-uses x)
   (list (ssa-load-ptr x)))
 
-(define (ssa-format-load node)
+(define (ssa-load-format node)
   (format "load ~a ~a"
           (ssa-format-type  (ssa-node-type node))
           (ssa-format-value (ssa-load-ptr node))))
@@ -353,9 +359,11 @@
   (list (ssa-store-value x)
         (ssa-store-ptr x)))
 
-(define (ssa-format-store node)
-  (format "store ~a ~a"
-          (ssa-format-type  (ssa-node-type (ssa-store-value node)))
+(define (ssa-store-format node)
+  (assertp ssa-store? node)
+  (format "store ~a ~a,  ~a"
+          (ssa-format-type (ssa-node-type (ssa-store-value node)))
+          (ssa-format-value (ssa-store-value node))
           (ssa-format-value (ssa-store-ptr  node))))
 
 ;; conditional branch 
@@ -399,12 +407,12 @@
         (ssa-brc-labelx x)
         (ssa-brc-labely x)))
 
-(define (ssa-format-brc node)
+(define (ssa-brc-format node)
   (format "brc ~a ~a, ~a, ~a"
-          (ssa-format-type  (ssa-node-type (ssa-brc-cond x)))
-          (ssa-format-value (ssa-brc-cond x))
-          (ssa-format-value (ssa-brc-labelx x))
-          (ssa-format-value (ssa-brc-labely x))))
+          (ssa-format-type  (ssa-node-type (ssa-brc-cond node)))
+          (ssa-format-value (ssa-brc-cond node))
+          (ssa-format-value (ssa-brc-labelx node))
+          (ssa-format-value (ssa-brc-labely node))))
 
 ;; unconditional branch 
 
@@ -425,25 +433,25 @@
 (define (ssa-br-list-uses x)
   (list (ssa-br-label x)))
 
-(define (ssa-format-br node)
+(define (ssa-br-format node)
   (format "br ~a"
           (ssa-format-value (ssa-br-label x))))
 
 ;; elementptr
 
-(define (ssa-elementpr-ptr x)
+(define (ssa-elementptr-ptr x)
   (assertp ssa-elementptr? x)
   (ssa-node-in1 x))
 
-(define (ssa-elementpr-ptr-set! x v)
+(define (ssa-elementptr-ptr-set! x v)
   (assertp ssa-elementptr? x)
   (ssa-node-in1-set! x v))
 
-(define (ssa-elementpr-offset x)
+(define (ssa-elementptr-offset x)
   (assertp ssa-elementptr? x)
   (ssa-node-in2 x))
 
-(define (ssa-elementpr-offset-set! x v)
+(define (ssa-elementptr-offset-set! x v)
   (assertp ssa-elementptr? x)
   (ssa-node-in2-set! x v))
 
@@ -459,7 +467,7 @@
   (list (ssa-elementptr-ptr x)
         (ssa-elementptr-offset x)))
 
-(define (ssa-format-elementptr x)
+(define (ssa-elementptr-format x)
   (format "elementptr ~a ~a, ~a"
           (ssa-format-type (ssa-node-type (ssa-elementptr-ptr x)))
           (ssa-format-value (ssa-elementptr-ptr x))
@@ -486,7 +494,7 @@
 
 (define (ssa-cmp-y x)
   (assertp ssa-cmp? x)
-  (ssa-node-in3 y))
+  (ssa-node-in3 x))
 
 (define (ssa-cmp-y-set! x v)
   (assertp ssa-cmp? x)
@@ -503,7 +511,7 @@
 (define (ssa-cmp-list-uses f x)
   (list (ssa-cmp-x x) (ssa-cmp-y x)))
 
-(define (ssa-format-cmp x)
+(define (ssa-cmp-format x)
   (format "cmp ~a ~a ~a, ~a"
           (ssa-cmp-test x)
           (ssa-format-type (ssa-node-type x)) 
@@ -529,7 +537,7 @@
 (define (ssa-phi-list-uses x)
   (ssa-phi-args x))
 
-(define (ssa-format-phi x)
+(define (ssa-phi-format x)
   (format "phi ~a ~a"
           (ssa-format-type (ssa-node-type x)) 
           (string-join (ssa-phi-args x) ", ")))
@@ -540,7 +548,7 @@
 (define <ssa-op-add>
   (make-ssa-op
    'add
-   ssa-format-add
+   ssa-add-format
    ssa-fold-add?
    ssa-fold-add
    ssa-binop-iterate-uses
@@ -550,7 +558,7 @@
 (define <ssa-op-sub>
   (make-ssa-op
    'sub
-   ssa-format-sub
+   ssa-sub-format
    ssa-fold-sub?
    ssa-fold-sub
    ssa-binop-iterate-uses
@@ -560,7 +568,7 @@
 (define <ssa-op-mul>
   (make-ssa-op
    'mul
-   ssa-format-mul
+   ssa-mul-format
    ssa-fold-mul?
    ssa-fold-mul
    ssa-binop-iterate-uses
@@ -570,7 +578,7 @@
 (define <ssa-op-and>
   (make-ssa-op
    'and
-   ssa-format-and
+   ssa-and-format
    ssa-fold-and?
    ssa-fold-and
    ssa-binop-iterate-uses
@@ -580,7 +588,7 @@
 (define <ssa-op-or>
   (make-ssa-op
    'or
-   ssa-format-or
+   ssa-or-format
    ssa-fold-or?
    ssa-fold-or
    ssa-binop-iterate-uses
@@ -590,7 +598,7 @@
 (define <ssa-op-xor>
   (make-ssa-op
    'xor
-   ssa-format-xor
+   ssa-xor-format
    ssa-fold-xor?
    ssa-fold-xor
    ssa-binop-iterate-uses
@@ -600,7 +608,7 @@
 (define <ssa-op-shl>
   (make-ssa-op
    'shl
-   ssa-format-shl
+   ssa-shl-format
    ssa-fold-shl?
    ssa-fold-shl
    ssa-binop-iterate-uses
@@ -610,7 +618,7 @@
 (define <ssa-op-shr>
   (make-ssa-op
    'shr
-   ssa-format-shr
+   ssa-shr-format
    ssa-fold-shr?
    ssa-fold-shr
    ssa-binop-iterate-uses
@@ -622,7 +630,7 @@
 (define <ssa-op-store>
   (make-ssa-op
    'store
-   ssa-format-store
+   ssa-store-format
    '()
    '()
    ssa-store-iterate-uses
@@ -634,7 +642,7 @@
 (define <ssa-op-load>
   (make-ssa-op
    'load
-   ssa-format-load
+   ssa-load-format
    '()
    '()
    ssa-load-iterate-uses
@@ -646,7 +654,7 @@
 (define <ssa-op-ret>
   (make-ssa-op
    'ret
-   ssa-format-ret
+   ssa-ret-format
    '()
    '()
    ssa-ret-iterate-uses
@@ -658,7 +666,7 @@
 (define <ssa-op-call>
   (make-ssa-op
    'call
-   ssa-format-call
+   ssa-call-format
    '()
    '()
    ssa-call-iterate-uses
@@ -670,7 +678,7 @@
 (define <ssa-op-br>
   (make-ssa-op
    'br
-   ssa-format-br
+   ssa-br-format
    '()
    '()
    ssa-br-iterate-uses
@@ -682,7 +690,7 @@
 (define <ssa-op-brc>
   (make-ssa-op
    'brc
-   ssa-format-brc
+   ssa-brc-format
    '()
    '()
    ssa-brc-iterate-uses
@@ -694,19 +702,17 @@
 (define <ssa-op-cmp>
   (make-ssa-op
    'cmp
-   ssa-format-cmp
+   ssa-cmp-format
    '()
    '()
    ssa-cmp-iterate-uses
    ssa-cmp-replace-uses
    ssa-cmp-list-uses))
-
-;; phi
-
+  
 (define <ssa-op-phi>
   (make-ssa-op
    'phi
-   ssa-format-phi
+   ssa-phi-format
    '()
    '()
    ssa-phi-iterate-uses
@@ -718,7 +724,7 @@
 (define <ssa-op-elementptr>
   (make-ssa-op
    'elementptr
-   ssa-format-elementptr
+   ssa-elementptr-format
    '()
    '()
    ssa-elementptr-iterate-uses
@@ -730,7 +736,7 @@
 (define <ssa-op-cast>
   (make-ssa-op
    'cast
-   ssa-format-cast
+   ssa-cast-format
    '()
    '()
    ssa-cast-iterate-uses
@@ -742,7 +748,7 @@
 (define <ssa-op-ptrtoint>
   (make-ssa-op
    'ptrtoint
-   ssa-format-ptrtoint
+   ssa-ptrtoint-format
    '()
    '()
    ssa-ptrtoint-iterate-uses
@@ -754,7 +760,7 @@
 (define <ssa-op-inttoptr>
   (make-ssa-op
    'inttoptr
-   ssa-format-inttoptr
+   ssa-inttoptr-format
    '()
    '()
    ssa-inttoptr-iterate-uses
@@ -766,7 +772,7 @@
 (define <ssa-op-phi>
   (make-ssa-op
    'phi
-   ssa-format-phi
+   ssa-phi-format
    '()
    '()
    ssa-phi-iterate-uses

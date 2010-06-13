@@ -91,9 +91,11 @@
 (define (ssa-type-pointer-points-to-type x)
   (ssa-type-points-to-type x))
 
-
 (define (ssa-type-function-return-type x)
   (ssa-type-return-type x))
+
+(define (ssa-type-function-param-types x)
+  (ssa-type-param-types x))
 
 ;; type predicates
 
@@ -112,6 +114,10 @@
 (define (ssa-type-label? x)
   (ssa-type-code? x 'label))
 
+(define (ssa-type-function? x)
+  (ssa-type-code? x 'function))
+
+
 ;; formatting
 
 (define (ssa-format-type x)
@@ -125,8 +131,16 @@
       ((32) "i32")
       ((64) "i64")))
    ((ssa-type-label? x) "label")
+   ((ssa-type-function? x)
+    (sprintf "~a (~a)"
+             (ssa-format-type (ssa-type-function-return-type x))
+             (string-join
+              (map (lambda (type)
+                     (ssa-format-type type))
+                   (ssa-type-function-param-types x))
+              ", ")))
    ((ssa-type-pointer? x)
-    (format "~a*" (ssa-type-pointer-points-to-type x)))
-   (else (assert-not-reached))))
+    (format "~a*" (ssa-format-type (ssa-type-pointer-points-to-type x))))
+   (else (assert-not-reached 'ssa-format-type x))))
       
       
