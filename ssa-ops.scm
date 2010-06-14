@@ -245,11 +245,11 @@
   
 ;; call
 
-(define (ssa-call-fun x)
+(define (ssa-call-target x)
   (assertp ssa-call? x)
   (ssa-node-in1 x))
 
-(define (ssa-call-fun-set! x v)
+(define (ssa-call-target-set! x v)
   (assertp ssa-call? x)
   (ssa-node-in1-set! x v))
 
@@ -262,23 +262,26 @@
   (ssa-node-in2 x v))
 
 (define (ssa-call-iterate-uses f x)
-  (f (ssa-call-fun x))
+  (f (ssa-call-target x))
   (for-each f (ssa-call-args x)))
 
 (define (ssa-call-replace-uses f x)
-  (ssa-call-fun-set! x (f (ssa-call-fun x)))
+  (ssa-call-target-set! x (f (ssa-call-target x)))
   (ssa-call-args-set! x (map f (ssa-call-args x))))
 
 (define (ssa-call-list-uses f x)
-  (cons (ssa-call-fun x) (ssa-call-args x)))
+  (cons (ssa-call-target x) (ssa-call-args x)))
 
 (define (ssa-call-format node)
-  (format "call ~a ~a (~a)"
+  (sprintf "call ~a ~a (~a)"
           (ssa-format-type  (ssa-node-type node))
-          (ssa-format-value (ssa-call-fun node))
+          (ssa-format-value (ssa-call-target node))
           (string-join
-           (map (lambda (arg)
-                  (ssa-format-value arg))
+           (map (lambda (arg-type arg)
+                  (sprintf "~a ~a"
+                           (ssa-format-type arg-type)
+                           (ssa-format-value arg)))
+                (ssa-type-function-param-types (ssa-type-pointer-points-to-type (ssa-node-type (ssa-call-target node))))
                 (ssa-call-args node))
            ", ")))
           
@@ -408,10 +411,12 @@
         (ssa-brc-labely x)))
 
 (define (ssa-brc-format node)
-  (format "brc ~a ~a, ~a, ~a"
+  (format "brc ~a ~a, ~a ~a, ~a ~a"
           (ssa-format-type  (ssa-node-type (ssa-brc-cond node)))
           (ssa-format-value (ssa-brc-cond node))
+          (ssa-format-type  (ssa-node-type (ssa-brc-labelx node)))
           (ssa-format-value (ssa-brc-labelx node))
+          (ssa-format-type  (ssa-node-type (ssa-brc-labely node)))
           (ssa-format-value (ssa-brc-labely node))))
 
 ;; unconditional branch 

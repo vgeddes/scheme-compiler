@@ -650,8 +650,12 @@
        (let* ((target (fetch name table))
               (args (map (lambda (arg)
                            (fetch arg table))
-                         args)))
-         (ssa-build-call block 'tail target args)))
+                         args))
+              (len  (length args))
+              (type (ssa-type-pointer-get (ssa-type-function-get <ssa-void> (list-of <ssa-i64> len) len)))
+              (t0 (ssa-build-inttoptr block type target))
+              (t1 (ssa-build-call block 'tail t0 args)))
+         '()))
       ((nil) '())
       ((if test conseq altern)
        (let* ((test (fetch test table))
@@ -707,6 +711,7 @@
     (ssa-node-attr-set! fun 'is-declaration #t)
     (ssa-node-attr-set! fun 'is-definition #f)
     '()))
+
 
 (define (ssa-convert node)
   (struct-case node

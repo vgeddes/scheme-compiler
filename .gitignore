@@ -3,6 +3,7 @@
 *.dot
 *.tar.gz
 scc
+TAGS
 test-fast-match
 docs/manual.info
 docs/manual

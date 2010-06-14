@@ -149,7 +149,7 @@
 (define (ssa-make-function type name mod)
   (let ((node
          (ssa-node-with-attrs
-          (type   type)
+          (type   (ssa-type-pointer-get type))
           (tag   'function)
           (attrs `((name . ,name))))))
     (ssa-module-add-function! mod node)
@@ -194,9 +194,7 @@
 (define (ssa-make-call block callconv target args)
   (let ((node
          (ssa-node-with-attrs
-          (type   (if (ssa-function? target)
-                      (ssa-type-function-return-type (ssa-node-type target))
-                      <ssa-void>))
+          (type   (ssa-type-function-return-type (ssa-type-pointer-points-to-type (ssa-node-type target))))
           (tag   'instr)
           (op    <ssa-op-call>)
           (in1    target)
@@ -485,6 +483,14 @@
 
 ;; function
 
+(define (ssa-function-return-type x)
+  (assertp ssa-function? x)
+  (ssa-type-function-return-type (ssa-type-pointer-points-to-type (ssa-node-type x))))
+
+(define (ssa-function-param-types x)
+  (assertp ssa-function? x)
+  (ssa-type-function-param-types (ssa-type-pointer-points-to-type (ssa-node-type x))))
+
 (define (ssa-function-name x)
   (assertp ssa-function? x)
   (ssa-node-attr x 'name))
@@ -556,16 +562,16 @@
     (print-declaration
      (ssa-function-name x)
      (ssa-function-args x)
-     (ssa-type-function-return-type (ssa-node-type x))
-     (ssa-type-function-param-types (ssa-node-type x))
+     (ssa-function-return-type x)
+     (ssa-function-param-types x)
      port)
     (print-body x port))
    ((ssa-function-is-declaration? x)
     (print-declaration
      (ssa-function-name x)
      (ssa-function-args x)
-     (ssa-type-function-return-type (ssa-node-type x))
-     (ssa-type-function-param-types (ssa-node-type x))
+     (ssa-function-return-type x)
+     (ssa-function-param-types x)
      port))
    (else (assert-not-reached))))
  

@@ -48,6 +48,9 @@ tarball: dist-prep
 	tar -czf $(PACKAGE)-$(VERSION).tar.gz $(PACKAGE)-$(VERSION)
 	rm -rf $(PACKAGE)-$(VERSION)
 
+tags:
+	etags *.scm
+
 .PHONY : clean
 clean:
 	rm -rf $(PACKAGE)-$(VERSION) $(PACKAGE)-$(VERSION).tar.gz
