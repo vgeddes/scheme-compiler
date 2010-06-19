@@ -651,11 +651,18 @@
               (args (map (lambda (arg)
                            (fetch arg table))
                          args))
-              (len  (length args))
-              (type (ssa-type-pointer-get (ssa-type-function-get <ssa-void> (list-of <ssa-i64> len) len)))
-              (t0 (ssa-build-inttoptr block type target))
-              (t1 (ssa-build-call block 'tail t0 args)))
-         '()))
+              (len  (length args)))
+         ;; call() can directly reference a function or indirectly via an i64 variable 
+         (cond
+          ((ssa-type-function-pointer? (ssa-node-type target))
+           (let* ((t0 (ssa-build-call block 'tail target args)))
+             '()))
+          ((ssa-type-integer? (ssa-node-type target))
+           (let* ((type (cps-function-type len))
+                 (t0 (ssa-build-inttoptr block type target))
+                 (t1 (ssa-build-call block 'tail t0 args)))
+             '()))
+          (else (assert-not-reached)))))
       ((nil) '())
       ((if test conseq altern)
        (let* ((test (fetch test table))
@@ -669,7 +676,7 @@
              (result (variable-name result)))
          (case name
            ((fx+ fx- fx* fx<= fx>= fx< fx> fx=)
-            (let ((result-node (convert-prim-binop name (first args) (second args) block table)))            
+            (let ((result-node (convert-prim-binop name (first args) (second args) block table)))
               (walk-node cexp block (augment result result-node table))))
            ((return)
             (let* ((e1 (fetch (first args) table))
@@ -694,19 +701,35 @@
        (walk-node body entry table)))))
            
 
+
 (define (list-of x count)
   (let f ((lst '()) (i 0))
     (if (< i count)
         (f (cons x lst) (+ i 1))
         lst)))
 
-(define (lambda-type-get arg-count)
-  (ssa-type-function-get <ssa-void> (list-of <ssa-i64> arg-count) arg-count))
+(define *cps-type-cache-size* 24)
+(define *cps-type-cache* (make-vector *cps-type-cache-size* '()))
+
+(define (cps-function-type param-count)
+  (define (cps-type param-count)
+    (ssa-type-pointer-get (ssa-type-function-get <ssa-void> (list-of <ssa-i64> param-count))))
+  (cond
+   ((< param-count *cps-type-cache-size*)
+    (let ((type (vector-ref *cps-type-cache* param-count)))
+      (cond
+       ((null? type)
+        (let ((type (cps-type param-count)))
+          (vector-set! *cps-type-cache* param-count type)
+          type))
+       (else type))))
+   (else (cps-type param-count))))
+
 
 ;; add external function proto's to module
 (define (prepare-module mod)
   ;; __scm_alloc
-  (let* ((type (ssa-type-function-get <ssa-ptr-i64> (list <ssa-i32>) 1))
+  (let* ((type (ssa-type-function-get <ssa-ptr-i64> (list <ssa-i32>)))
          (fun  (ssa-make-function type '__scm_alloc mod)))
     (ssa-node-attr-set! fun 'is-declaration #t)
     (ssa-node-attr-set! fun 'is-definition #f)
@@ -726,7 +749,7 @@
                    (struct-case def
                     ((lambda name args body)
                      (let* ((arg-count (length args))
-                            (type      (ssa-type-function-get <ssa-void> (list-of <ssa-i64> arg-count) arg-count))
+                            (type      (ssa-type-function-get <ssa-void> (list-of <ssa-i64> arg-count)))
                             (fun       (ssa-make-function type name mod)))
                        (ssa-node-attr-set! fun 'is-declaration #f)
                        (ssa-node-attr-set! fun 'is-definition #t)

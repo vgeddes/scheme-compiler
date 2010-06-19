@@ -167,6 +167,8 @@
           (in1      x)
           (in2      y)
           (block block))))
+    (ssa-add-user! x node)
+    (ssa-add-user! y node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-load block ptr)
@@ -177,6 +179,7 @@
           (op    <ssa-op-load>)
           (in1   ptr)
           (block block))))
+    (ssa-add-user! ptr node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-store block value ptr)
@@ -188,8 +191,9 @@
           (in1   ptr)
           (in2   value)
           (block block))))
-    (ssa-block-add-instr! block node)
-    node))
+    (ssa-add-user! value node)
+    (ssa-add-user! ptr   node)
+    (ssa-block-add-instr! block node)))
 
 (define (ssa-make-call block callconv target args)
   (let ((node
@@ -201,6 +205,10 @@
           (in2    args)
           (block  block)
           (attrs `((callconv . ,callconv))))))
+    (ssa-add-user! target node)
+    (for-each (lambda (arg)
+                (ssa-add-user! arg node))
+              args)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-ret block value)
@@ -221,6 +229,7 @@
           (op       <ssa-op-br>)
           (in1      label)
           (block    block))))
+    (ssa-add-user! label node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-brc block cond labelx labely)
@@ -233,6 +242,8 @@
           (in2      labelx)
           (in3      labely)
           (block    block))))
+    (ssa-add-user! labelx node)
+    (ssa-add-user! labely node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-phi block in)
@@ -254,6 +265,8 @@
           (in1   ptr)
           (in2   index)
           (block block))))
+    (ssa-add-user! ptr   node)
+    (ssa-add-user! index node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-cast block type value)
@@ -264,6 +277,7 @@
           (op       <ssa-op-cast>)
           (in1      value)
           (block    block))))
+    (ssa-add-user! value node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-ptrtoint block type value)
@@ -274,6 +288,7 @@
           (op       <ssa-op-ptrtoint>)
           (in1      value)
           (block    block))))
+    (ssa-add-user! value node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-inttoptr block type value)
@@ -284,6 +299,7 @@
           (op       <ssa-op-inttoptr>)
           (in1      value)
           (block    block))))
+    (ssa-add-user! value node)
     (ssa-block-add-instr! block node)))
 
 (define (ssa-make-cmp block test x y)
@@ -296,6 +312,8 @@
           (in2    x)
           (in3    y)
           (block  block))))
+    (ssa-add-user! x node)
+    (ssa-add-user! y node)
     (ssa-block-add-instr! block node)))
 
 ;; constructors for atoms
@@ -556,7 +574,6 @@
        (ssa-block-print block port))
      x)
     (fprintf port "}\n"))
-  
   (cond
    ((ssa-function-is-definition? x)
     (print-declaration

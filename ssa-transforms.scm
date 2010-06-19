@@ -37,17 +37,14 @@
 
 ;; def-use traversal
 
-(define (ssa-add-use! node x)
-  (ssa-node-uses-set! node (cons x (ssa-node-uses node))))
+(define (ssa-add-user! node x)
+  (ssa-node-users-set! node (cons x (ssa-node-users node))))
 
-(define (ssa-remove-use! node x)
-  (ssa-node-uses-set! node (delete eq? x (ssa-node-uses node))))
+(define (ssa-remove-user! node x)
+  (ssa-node-users-set! node (delete eq? x (ssa-node-users node))))
 
-(define (ssa-for-each-use f instr)
-  (for-each f (ssa-node-uses instr)))
-
-(define (ssa-for-each-def f user)
-  (vector-for-each f (ssa-node-in user)))
+(define (ssa-for-each-user f instr)
+  (for-each f (ssa-node-users instr)))
 
 ;; deletion
 
@@ -56,17 +53,19 @@
         (next  (ssa-instr-next instr))
         (prev  (ssa-instr-prev instr)))
     (cond
-     ((not (null? next))
+     ((and (not (null? prev)) (not (null? next)))
+      (ssa-instr-prev-set! next prev)
       (ssa-instr-next-set! prev next))
-    (cond
-     ((not (null? prev))
-      (ssa-instr-prev-set! next prev)))
+     ((and (null? prev) (not (null? next)))
+      (ssa-instr-prev-set! next '()))
+     ((and (null? next) (not (null? prev)))
+      (ssa-instr-next-set! prev '())))
     (cond
      ((null? prev)
-      (ssa-block-head-set! next)))
+      (ssa-block-head-set! block next)))
     (cond
      ((null? next)
-      (ssa-block-tail-set! prev))))))
+      (ssa-block-tail-set! block prev)))))
 
 ;; Replaces all uses of `value` with `x`. 
 (define (ssa-replace-all-uses-with! value x)
