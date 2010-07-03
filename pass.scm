@@ -670,6 +670,7 @@
               (block2 (start-block altern block table))
               (t1 (ssa-build-cmp block 'eq test (ssa-constant-get <ssa-i64> *false-value*)))
               (t2 (ssa-build-brc block t1 block1 block2)))
+         (ssa-replace-all-uses-with! t1 (ssa-constant-get <ssa-i64> 7))
          '()))
       ((prim name args result cexp)
        (let ((name   (variable-name name))
@@ -761,7 +762,7 @@
                    (ssa-convert-lambda def mod))
                  defs)
 
-       (ssa-module-print mod (current-output-port))
+       ;;(ssa-module-print mod (current-output-port))
        
        ))))
 

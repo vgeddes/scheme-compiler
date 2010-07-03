@@ -242,6 +242,7 @@
           (in2      labelx)
           (in3      labely)
           (block    block))))
+    (ssa-add-user! cond   node)
     (ssa-add-user! labelx node)
     (ssa-add-user! labely node)
     (ssa-block-add-instr! block node)))
@@ -660,8 +661,6 @@
    (lambda (instr)
      (ssa-instr-print instr port))
    x))
-    
- 
 
 ;; global variable (compile-time static variable)
 

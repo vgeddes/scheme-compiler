@@ -69,30 +69,30 @@
 
 ;; Replaces all uses of `value` with `x`. 
 (define (ssa-replace-all-uses-with! value x)
-  (ssa-for-each-use
+  (ssa-for-each-user
    (lambda (user)
-     (ssa-node-in-set!
-      (vector-map (lambda (x)
-                    (cond
-                     ((eq? x from)
-                      (ssa-add-use! to user)
-                      to)
-                     (else from)))
-                  (ssa-node-in user))))
+     (ssa-instr-replace-uses
+      (lambda (v)
+        (cond
+         ((eq? value v)
+          (ssa-add-user! x user)
+          x)
+         (else v)))
+      user))
    value)
-  (ssa-node-uses-set! value '()))
+  (ssa-node-users-set! value '()))
   
-;; Replaces all uses of `value` in `user` with `x`. 
+;; Replaces all uses of `from` with `to` in `user`. 
 (define (ssa-replace-uses-of! user from to)
-  (ssa-node-in-set!
-   (vector-map (lambda (x)
-                 (cond
-                  ((eq? x from)
-                   (ssa-remove-use! from user)
-                   (ssa-add-use! to user)
-                   to)
-                  (else from)))
-               (ssa-node-in user))))   
+  (ssa-instr-replace-uses
+   (lambda (use)
+     (cond
+      ((eq? from use)
+       (ssa-add-use! to user)
+       (ssa-remove-use! from user)
+       to)
+      (else use)))
+   user))
 
 ;; Replaces `instr` with `x`
 (define (ssa-replace-instr! instr x)
