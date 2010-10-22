@@ -1,11 +1,12 @@
 
-(declare (uses pass nodes liveness))
+(declare (uses pass nodes liveness option-parser))
 
 (use matchable)
 (use srfi-95)
 (use srfi-13)
 
 (include "struct-syntax")
+(include "option-syntax")
 
 (define write-sexp
   (lambda (node)
@@ -79,139 +80,33 @@
 
 (compile pipeline test-code-0)
 
-
-(define-struct option-spec (short long arg msg action))
-
-
-(define (parse-option-specs specs)
-  (map (lambda (spec)
-         (apply make-option-spec spec))
-       specs))
- 
-(define (print-help usage description specs)
-
-  (define *padding* 2)
+(define-option-context *options*
   
-  (define (format-option-arg spec)
-    (let* ((tmp
-            (sprintf "-~a  -~a"
-                    (option-spec-short spec)
-                    (option-spec-long spec))))
-      (if (option-spec-arg spec)
-          (string-append tmp " " (symbol->string (option-spec-arg spec)))
-          tmp)))
-
-  (define (determine-col-size specs)
-    (if (null? specs)
-        0
-        (let ((seq
-               (sort
-                (list->vector
-                 (map (lambda (spec)
-                        (string-length (format-option-arg spec)))
-                      specs))
-                <)))
-          (vector-ref seq (- (vector-length seq) 1)))))
-
-  (define (ws width)
-    (make-string width #\space))
+  ((-o -output-file FILENAME)
+   "Output file for compiled binary"
+   (lambda (v)
+     (param-input-file v)))
   
-  (define (format-option spec left-margin col-width)
-    (string-append
-     (ws left-margin)
-     (string-pad-right (format-option-arg spec) col-width #\space)
-     "  "
-     (option-spec-msg spec)))
-
-  (define (format-options specs)
-    (let* ((col-width (determine-col-size specs)))
-      (string-append
-       (ws 2) "Options:\n\n"
-       (string-join
-        (map (lambda (spec)
-               (format-option spec 4 col-width))
-             specs)
-        "\n"))))
-
-  (define (format-usage usage-str)
-    (string-append "Usage: " usage-str))
-
-  (define (format-descr descr-str)
-    (string-append (ws 2) descr-str))
+  ((-V -version)
+   "Show version information"
+   (lambda ()
+     (print "scc 0.1.1")))
   
-  (define (format-help usage description specs)
-    (string-append
-     (format-usage usage)
-     "\n\n"
-     (format-descr description)
-     "\n\n"
-     (format-options specs) "\n"))
+  ((-h -help)
+   "Show this message"
+   (lambda ()
+     (print-help
+      "scc [OPTION ...] FILE"
+      "scc is yet another scheme compiler."
+      *options*)))
   
-  (print (format-help usage description specs)))
-  
-  
-(define (matches-spec? arg spec)
-  (cond
-   ((and (option-spec-short spec) (option-spec-long spec))
-    (or (string=? arg (make-string 1 (option-spec-short spec)))
-        (string=? arg (symbol->string (option-spec-long spec)))))
-   ((option-spec-short spec)
-    (string=? arg (make-string 1 (option-spec-short spec))))
-   ((option-spec-long spec)
-    (string=? arg (symbol->string (option-spec-long spec))))
-   (else (assert-not-reached))))
-   
-(define (fold-args args specs)
-  (let f ((args args) (positionals '()))
-    (match args
-      (() (reverse positionals))
-      ((a . a*)
-       (let g ((specs specs))
-         (match specs
-           (() '())
-           ((s . s*)
-            (cond
-             ((string-prefix? "-" a)
-              (cond
-               ((matches-spec? (substring a 1) s)
-                (if (option-spec-arg s)
-                    (cond
-                     ((and (not (null? a*))
-                           (not (string-prefix? "-" (car a*))))
-                      ((option-spec-action s) (car a*)))
-                     ((or (null? a*) (string-prefix? "-" (car a*)))
-                      (option-error "option requires an argument"))
-                     (else (assert-not-reached)))
-                    ((option-spec-action s)))
-                (f a* positionals))
-               (else (g (cdr specs)))))
-             (else 
-              (f a* (cons a positionals)))))))))))
-
-(define *options*
-  (list 
-   (make-option-spec
-    #\o 'output-file 'FILENAME "Output file for compiled binary"
-    (lambda (v)
-      (param-input-file v)))
-   (make-option-spec
-    #\V 'version     #f       "Show version information"
-    (lambda ()
-      (print "scc 0.1.1")))
-   (make-option-spec
-    #\h 'help        #f       "Show this message"
-    (lambda ()
-      (print-help
-       "scc [OPTION ...] FILE"
-        "scc is yet another scheme compiler."
-        *options*)))
-   (make-option-spec
-    #\v 'verbose     #f       "Show verbose messages"
-    (lambda ()
-      '()))))
+  ((-v -verbose)
+   "Show verbose messages"
+   (lambda ()
+     '())))
 
 (define (main args)
-  (fold-args args *options*))
+  (parse-args args *options*))
        
 (main (argv))
 
