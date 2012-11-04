@@ -2,7 +2,6 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
-(include "fast-match-syntax")
 
 (define-syntax buf-append
   (syntax-rules ()
@@ -33,7 +32,7 @@
       (match pat
         ((? symbol? x)
          (list x))
-        ((or ('i8 x) ('i32 x) ('i64 x) ('label x) ('temp x))
+        ((or ('const _ _) ('mode _) ('op _) ('label _) ('temp _))
          '())
         ((opcode operand* ...)
          (apply append (map select-names operand*)))))
@@ -47,21 +46,79 @@
 
     (define (compile-pattern pat)
       (match pat
-        (('i8 x)
-         `('i8 . ,x))
-        (('i6 x)
-         `('i16 . ,x))
-        (('i32 x)
-         `('i32 . ,x))
-        (('i64 x)
-         `('i64 . ,x))
+
+        ;; assign
+
+        (('assign ('temp x) op)
+          `($ sl-instr 'assign _ (? symbol? ,x) ,(compile-pattern op) _ _ _ _ _))
+
+        ;; binops
+        
+        (('add mode op1 op2)
+          `($ sl-instr 'add ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        (('sub mode op1 op2)
+          `($ sl-instr 'sub ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        (('and mode op1 op2)
+          `($ sl-instr 'and ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        (('ior mode op1 op2)
+          `($ sl-instr 'ior ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        (('xor mode op1 op2)
+          `($ sl-instr 'xor ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        (('shl mode op1 op2)
+          `($ sl-instr 'shl ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        (('shr mode op1 op2)
+          `($ sl-instr 'shr ',(compile-pattern mode) ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _ _))
+
+        ;; load
+
+        (('load mode base index)
+          `($ sl-instr 'load  ',(compile-pattern mode) ,(compile-pattern base) ,(compile-pattern index) _ _ _ _ _))
+
+        ;; store
+ 
+        (('store mode value base index)
+          `($ sl-instr 'store ',(compile-pattern mode) ,(compile-pattern base) ,(compile-pattern index) ,(compile-pattern value) _ _ _ _))
+
+        ;; brc
+
+        (('brc cond label1 label2)
+          `($ sl-instr 'brc _ ,(compile-pattern cond) ,(compile-pattern label1) ,(compile-pattern label2) _ _ _ _))
+
+        ;; br
+
+        (('br label)
+          `($ sl-instr 'br _ ,(compile-pattern label) _ _ _ _ _ _))
+
+        ;; cmp
+
+        (('cmp mode ('op test) op1 op2)
+          `($ sl-instr 'cmp ',(compile-pattern mode) ',test ,(compile-pattern op1) ,(compile-pattern op2) _ _ _ _))
+
+        ;; atoms
+
+        (('const size x)
+         `($ sl-constant ',size ,x))
         (('label x)
-         `('label ,x))
+         `($ sl-label ,x))
         (('temp x)
-         `(as ,x (? symbol?)))
+         `($ sl-temp ,x))
+
+        ;; hmm, forgot
+        
         ((? symbol? x) (rename x))
-        ((operator operand* ...)
-         `($ selection-node ',operator ,(map compile-pattern operand*)))))
+
+        ;; mode
+
+        (('mode x)
+         x)
+
+        (_ (print pat))))
 
     (define (generate-bindings bindings)
       (match bindings
@@ -109,13 +166,13 @@
     (define (compile-rule rule)
       (match rule
         ((('temp x) x)
-         `((as ,x (? symbol?)) ,x))
+         `(($ sl-temp ,x) ,x))
         ((pat temp-cls out-cls tmpl) 
          (generate-rule
             pat
             (parse-temp-cls temp-cls)  
             (parse-out-cls  out-cls)
-            (parse-tmpl     tmpl)))))
+            (parse-tmpl     tmpl))))) 
     
     (match e
       (('define-munch-rules rule* ...)
@@ -127,5 +184,13 @@
              (%match      (r 'fast-match))
              (%else       (r 'else))
              (%define     (r 'define)))
+ ;;         (pretty-print 
+ ;;`(,%define (munch-node node buf)
+ ;;           (match node 
+ ;;             ,@compiled-rule*
+ ;;             (_ (print (sl-instr-format node))))))
+
+
          `(,%define (munch-node node buf)
-            (fast-match node ,@compiled-rule*)))))))
+            (match node ,@compiled-rule* (_ (print "error: ") (print (sl-instr-format node))))))))))
+

@@ -1,6 +1,6 @@
 
 (declare (unit pass)
-         (uses nodes ssa munch utils))
+         (uses nodes munch ssa sl utils))
 
 (use matchable)
 (use srfi-1)
@@ -762,31 +762,246 @@
                    (ssa-convert-lambda def mod))
                  defs)
 
-       ;;(ssa-module-print mod (current-output-port))
+       (ssa-module-print mod (current-output-port))
        
+))))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(define (selection-convert-lambda node mod)
+ 
+  (define (start-new-block expr pred-block)
+    ;; process the code path referenced by `expr' and return a label to the start block of the newly created subtree
+    (let* ((block (sl-make-block (gensym) '() '() '() '() (sl-block-function pred-block))))
+      (sl-block-pred-set! block pred-block)
+      (sl-block-add-succ! pred-block block)
+      (walk-node expr block)
+      (sl-make-label (sl-block-name block))))
+
+  (define (convert-atom x)
+    (cond
+      ((constant? x)
+       (sl-make-constant 'i32 (constant-value x)))
+      ((variable? x)
+       (sl-make-temp (variable-name x)))
+      ((label? x)
+       (sl-make-label (label-name x)))
+      (else
+       (assert-not-reached))))
+
+  (define *sl-boolean-shift* (sl-constant-get 'i8 (immediate-rep *boolean-shift*)))
+  (define *sl-boolean-tag*   (sl-constant-get 'i8 (immediate-rep *boolean-tag*)))
+  
+  (define (convert-prim-binop op e1 e2 block)
+    (case op
+      ((fx+)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-add 'i64 e1 e2)))
+         t1))
+      ((fx-)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-sub 'i64 e1 e2)))
+         t1))
+      ((fx*)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-mul 'i64 e1 e2)))
+         t1))
+      ((fx<=)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-cmp 'le e1 e2))
+              (t2    (sl-build-shl 'i64 *sl-boolean-shift* t1))
+              (t3    (sl-build-ior 'i64 *sl-boolean-tag*   t2)))
+         t3))
+      ((fx>=)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-cmp 'ge e1 e2))
+              (t2    (sl-build-shl 'i64 *sl-boolean-shift* t1))
+              (t3    (sl-build-ior  'i64 *sl-boolean-tag*   t2)))
+         t3))
+      ((fx<)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-cmp 'lt e1 e2))
+              (t2    (sl-build-shl 'i64 *sl-boolean-shift* t1))
+              (t3    (sl-build-ior 'i64 *sl-boolean-tag*   t2)))
+         t3))
+      ((fx>)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-cmp 'gt e1 e2))
+              (t2    (sl-build-shl 'i64 *sl-boolean-shift* t1))
+              (t3    (sl-build-ior 'i64 *sl-boolean-tag*   t2)))
+         t3))
+      ((fx=)
+       (let* ((e1    (convert-atom e1))
+              (e2    (convert-atom e2))
+              (t1    (sl-build-cmp 'eq e1 e2))
+              (t2    (sl-build-shl 'i64 *sl-boolean-shift* t1))
+              (t3    (sl-build-ior 'i64 *sl-boolean-tag*   t2)))
+         t3))
+      (else (assert-not-reached))))
+
+  (define (emit-stores block values base)
+    (let f ((values values) (i 0))
+      (match values
+        (() '())
+        ((v . v*)
+         (let* ((st  (sl-build-store 'i64 v base (sl-constant-get 'i32 i))))
+          (sl-block-add-statement! block st)
+           (f v* (+ i 1)))))))
+  
+  (define (walk-node node block)
+    (struct-case node
+      ((select index record name cexp)
+       (let* ((record (convert-atom record))
+              (t1     (sl-build-load 'i64 record (sl-constant-get 'i32 index)))
+              (t2     (sl-build-assign (variable-name name) t1)))
+         (sl-block-add-statement! block t2)
+         (walk-node cexp block)))
+      ((record values name cexp)
+       (let* ((size (sl-constant-get 'i32 (length values)))
+              (t0   (sl-build-call 'cdecl (sl-make-label '__scm_alloc) (list size)))
+              (t1   (sl-build-assign (variable-name name) t0)))
+         (sl-block-add-statement! block t1)
+         (emit-stores block (map (lambda (v) (convert-atom v)) values) (convert-atom name))
+         (walk-node cexp block)))
+      ((app name args)
+       ;; remember to support label targets in future
+       (let* ((target (convert-atom name))
+              (args (map (lambda (arg)
+                           (convert-atom arg))
+                         args))
+              (len  (length args))
+              (t0 (sl-build-call 'tail target args)))
+        (sl-block-add-statement! block t0)
+         '()))
+      ((nil) '())
+      ((if test conseq altern)
+       (let* ((test (convert-atom test))
+              (block1 (start-new-block conseq block))
+              (block2 (start-new-block altern block))
+              (t0 (sl-build-cmp 'eq test (sl-constant-get 'i32 *false-value*)))
+              (t1 (sl-build-brc t0 block1 block2)))
+         (sl-block-add-statement! block t1)
+         '()))
+      ((prim name args result cexp)
+       (let ((name   (variable-name name))
+             (result (variable-name result)))
+         (case name
+           ((fx+ fx- fx* fx<= fx>= fx< fx> fx=)
+            (let* ((t0 (convert-prim-binop name (first args) (second args) block))
+                   (t1 (sl-build-assign result t0)))
+             (sl-block-add-statement! block t1)
+              (walk-node cexp block)))
+           ((return)
+            (let* ((e1 (convert-atom (first args)))
+                   (t0 (sl-build-return e1)))
+              (sl-block-add-statement! block t0)
+              '()))
+           (else (assert-not-reached)))))))
+
+  (struct-case node
+    ((lambda name args body)
+     (let* ((new-args (map (lambda (arg)
+                            (sl-make-temp arg))
+                          args))
+            (fun (sl-make-function name new-args '() mod))
+            (entry (sl-make-block name '() '() '() '() fun)))
+
+       (sl-function-entry-set! fun entry)
+
+       ;; walk the lambda body
+       (walk-node body entry)
+       fun))))
+           
+(define (selection-convert node)
+  (struct-case node
+    ((fix defs body)
+     (let* ((mod  (sl-make-module))
+            (defs (cons (make-lambda 'MAIN '() body '()) defs)))
+       
+       ;; convert the definitions into function bodies
+       (for-each (lambda (def)
+               (sl-module-add-function! mod (selection-convert-lambda def mod)))
+                 defs)
+
+    ;;  (sl-module-print mod (current-output-port))
+      mod
        ))))
 
 (define (select-instructions module)
   (struct-case module
-    ((module contexts)
-     (make-module
-      (map select-instructions-for-context contexts)))
+    ((sl-module functions)
+     (map select-instructions-for-function functions))
     (else (error 'select-instructions))))
 
-(define (select-instructions-for-context context)
-  (struct-case context
-    ((context formals start blocks)
-     (make-context formals start
-       (map (lambda (block)
-              (match block
-                ((label (successors* ...) instr*)
-                 (let* ((instructions (box '())))
-                   (for-each
-                    (lambda (stm)
-                      (munch-statement stm instructions))
-                    instr*)
-                   (list label successors* (box-ref instructions))))))
-            blocks)))
+(define (select-instructions-for-function function)
+
+  (define (walk-block block asm-blocks)
+    (print "walking dis block")
+    (struct-case block
+      ((sl-block name head tail pred succ function)
+       (let* ((asm (box '())))
+         ;; munch each statement
+         (sl-for-each-statement 
+           (lambda (stm)
+             (munch-statement stm asm))
+             block)
+         ;; walk successor blocks
+        (if (null? (sl-block-succ block))
+             (reverse (cons `(,name ,@(box-ref asm)) asm-blocks))
+          (sl-for-each-block-succ
+            (lambda (block)
+              (walk-block block (cons `(,name ,@(box-ref asm)) asm-blocks)))
+            block))))
+       (else (error 'select-instructions-for-function "not a block" block))))
+
+  (struct-case function
+    ((sl-function name args entry module)
+     (print "walking dis func")
+     `(function ,name ,(map (lambda (tmp) (sl-temp-name tmp)) args)
+        ,(walk-block entry '())))
+
     (else (error 'select-instructions-for-context))))
 
 (define (immediate-rep x)

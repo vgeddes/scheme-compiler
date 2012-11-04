@@ -1,19 +1,6 @@
 
 
 (define-munch-rules
-
-  ;; call
-  
-  ((call (label target))
-   (temps) (out)
-   ((callrel32 target)))
-
-  ;;
-
-  ((alloc (temp x) (i32 size))
-   (temps) (out)
-   ((mov64rr 'rsi x)
-    (add64i32r size 'rsi)))
   
   ;; branch to label
   
@@ -36,104 +23,104 @@
 
   ;; branch if >
   
-  ((brc (cmpgt (i8 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i8) (op gt) (const i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
     (jg32rel32 `(label ,tl))))
 
-  ((brc (cmpgt (i32 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op gt) (const i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
     (jg32rel32 `(label ,tl))))
 
-  ((brc (cmpgt op1 op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op gt) op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
     (jg32rel32 `(label ,tl))))
 
   ;; branch if >=
   
-  ((brc (cmpge (i8 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i8) (op ge) (const i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
     (jge32rel32 `(label ,tl))))
 
-  ((brc (cmpge (i32 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op ge) (const i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
     (jge32rel32 `(label ,tl))))
 
-  ((brc (cmpge op1 op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op ge) op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
     (jge32rel32 `(label ,tl))))
 
   ;; branch if == 
 
-  ((brc (cmpeq (i8 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i8) (op eq) (const i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
     (je32rel32 `(label ,tl))))
   
-  ((brc (cmpeq (i32 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op eq) (const i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
     (je32rel32 `(label ,tl))))
   
-  ((brc (cmpeq op1 op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op eq) op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
     (je32rel32 `(label ,tl))))
 
   ;; branch if < 
   
-  ((brc (cmplt (i8 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i8) (op lt) (const i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
     (jl32rel32 `(label ,tl))))
 
-  ((brc (cmplt (i32 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op lt) (const i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
     (jl32rel32 `(label ,tl))))
 
-  ((brc (cmplt op1 op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op lt) op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
     (jl32rel32 `(label ,tl))))
 
   ;; branch if <= 
   
-  ((brc (cmple (i8 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i8) (op le) (const i8 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i8r x op2)
     (jle32rel32 `(label ,tl))))
 
-  ((brc (cmple (i32 x) op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op le) (const i32 x) op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64i32r x op2)
     (jle32rel32 `(label ,tl))))
 
-  ((brc (cmple op1 op2) (label tl) (label fl))
+  ((brc (cmp (mode i32) (op le) op1 op2) (label tl) (label fl))
    (temps) (out)
    ((cmp64rr op1 op2)
     (jle32rel32 `(label ,tl))))
   
   ;; compare <= 
 
-  ((cmple (i8 x) op2)
+  ((cmp (mode i8) (op le) (const i8 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i8r x op2)
     (setle8r t1)))
 
-  ((cmple (i32 x) op2)
+  ((cmp (mode i32) (op le) (const i32 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i32r x op2)
     (setle8r t1)))
 
-  ((cmple op1 op2)
+  ((cmp (mode i32) (op le) op1 op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64rr op1 op2)
@@ -141,19 +128,19 @@
 
   ;; compare <
 
-  ((cmplt (i8 x) op2)
+  ((cmp (mode i8) (op lt) (const i8 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i8r x op2)
     (setl8r t1)))
 
-  ((cmplt (i32 x) op2)
+  ((cmp (mode i32) (op lt) (const i32 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i32r x op2)
     (setl8r t1)))
 
-  ((cmplt op1 op2)
+  ((cmp (mode i32) (op lt) op1 op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64rr op1 op2)
@@ -161,19 +148,19 @@
   
   ;; compare == 
   
-  ((cmpeq (i8 x) op2)
+  ((cmp (mode i8) (op eq) (const i8 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i8r x op2)
     (sete8r t1)))
 
-  ((cmpeq (i32 x) op2)
+  ((cmp (mode i32) (op eq) (const i32 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i32r x op2)
     (sete8r t1)))
 
-  ((cmpeq op1 op2)
+  ((cmp (mode i32) (op eq) op1 op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64rr op1 op2)
@@ -181,19 +168,19 @@
   
   ;; compare >
 
-  ((cmpgt (i8 x) op2)
+  ((cmp (mode i8) (op gt) (const i8 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i8r x op2)
     (setg8r t1)))
 
-  ((cmpgt (i32 x) op2)
+  ((cmp (mode i32) (op gt) (const i32 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i32r x op2)
     (setg8r t1)))
 
-  ((cmpgt op1 op2)
+  ((cmp (mode i32) (op gt) op1 op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64rr op1 op2)
@@ -201,19 +188,19 @@
 
   ;; compare >=
 
-  ((cmpge (i8 x) op2)
+  ((cmp (mode i8) (op ge) (const i8 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i8r x op2)
     (setge8r t1)))
 
-  ((cmpge (i32 x) op2)
+  ((cmp (mode i32) (op ge) (const i32 x) op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64i32r x op2)
     (setge8r t1)))
 
-  ((cmpge op1 op2)
+  ((cmp (mode i32) (op ge) op1 op2)
    (temps t1) (out t1)
    ((mov64i32r 0 t1)
     (cmp64rr op1 op2)
@@ -225,195 +212,191 @@
   
   ;; load immediate
   
-  ((i8 x)
+  ((const i8 x)
    (temps t1) (out t1)
    ((mov64i8r x t1)))
   
-  ((i32 x)
+  ((const i32 x)
    (temps t1) (out t1)
    ((mov64i32r x t1)))
   
   ;; memory load
   
-  ((mov (ldq (temp base) (i8 offset)) (temp x))
+  ((assign (temp x) (load (mode i8) (temp base) (const i32 index)))
    (temps) (out)
-   ((mov64mr (mem base offset) x)))
+   ((mov64mr (mem base index) x)))
 
-  ((mov (ldq (temp base) (i32 offset)) (temp x))
+  ((assign (temp x) (load (mode i64) (temp base) (const i32 index)))
    (temps) (out)
-   ((mov64mr (mem base offset) x)))
+   ((mov64mr (mem base index) x)))
 
   ;; memory store
 
-  ((stq (temp x) (temp base) (i8 offset))
+  ((store (mode i64) (temp x) (temp base) (const i32 index))
    (temps) (out)
-   ((mov64rm x (mem base offset))))
+   ((mov64rm x (mem base index))))
 
-  ((stq (temp x) (temp base) (i32 offset))
-   (temps) (out)
-   ((mov64rm x (mem base offset))))
-
-  ((stq (label x) (temp base) (i8 offset))
+  ((store (mode i64) (label x) (temp base) (const i32 index))
    (temps t1) (out)
    ((lea64mr (mem 'rip x) t1)
-    (mov64rm t1 (mem base offset))))
+    (mov64rm t1 (mem base index))))
 
-  ((stq (label x) (temp base) (i32 offset))
-   (temps t1) (out)
-   ((lea64mr (mem 'rip x) t1)
-    (mov64rm t1 (mem base offset))))
+  ((store (mode i64) op1 (temp base) (const i32 index))
+   (temps) (out)
+   ((mov64rm op1 (mem base index))))
 
-  ;; mov
+  ;; assign
   
-  ((mov op1 (temp y))
+  ((assign (temp y) op1)
    (temps) (out)
    ((mov64rr op1 y)))
   
   ;; add
   
-  ((add op1 (i8 x))
-   (temps t5) (out) 
+  ((add (mode i64) op1 (const i8 x))
+   (temps t5) (out)
    ((mov64rr op1 t5)
     (add64i8r x t5)))
 
-  ((add (i8 x) op2)
+  ((add (mode i64) (const i8 x) op2)
    (temps t5) (out) 
    ((mov64rr op2 t5)
     (add64i8r x t5)))
 
-  ((add op1 (i32 x))
+  ((add (mode i64) op1 (const i32 x))
    (temps t5) (out) 
    ((mov64rr op1 t5)
     (add64i32r x t5)))
   
-  ((add (i32 x) op2)
+  ((add (mode i64) (const i32 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (add64i32r x t5)))
 
-  ((add op1 op2)
+  ((add (mode i64) op1 op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (add64rr op1 t5)))
 
   ;; sub
   
-  ((sub op1 (i8 x))
+  ((sub (mode i64) op1 (const i8 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (sub64i8r x t5)))
   
-  ((sub (i8 x) op2)
+  ((sub (mode i64) (const i8 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (sub64i8r x t5)))
 
-  ((sub op1 (i32 x))
+  ((sub (mode i64) op1 (const i32 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (sub64i32r x t5)))
   
-  ((sub (i32 x) op2)
+  ((sub (mode i64) (const i32 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (sub64i32r x t5)))
 
-  ((sub op1 op2)
+  ((sub (mode i64) op1 op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (sub64rr op1 t5)))
   
   ;; and
 
-  ((and op1 (i8 x))
+  ((and (mode i64) op1 (const i8 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (and64i8r x t5)))
   
-  ((and (i8 x) op2)
+  ((and (mode i64) (const i8 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (and64i8r x t5)))
 
-  ((and op1 (i32 x))
+  ((and (mode i64) op1 (const i32 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (and64i32r x t5)))
   
-  ((and (i32 x) op2)
+  ((and (mode i64) (const i32 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (and64i32r x t5)))
 
-  ((and op1 op2)
+  ((and (mode i64) op1 op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (and64rr op1 t5)))
 
   ;; or
 
-  ((or op1 (i8 x))
+  ((ior (mode i64) op1 (const i8 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (or64i8r x t5)))
   
-  ((or (i8 x) op2)
+  ((ior (mode i64) (const i8 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (or64i8r x t5)))
 
-  ((or op1 (i32 x))
+  ((ior (mode i64) op1 (const i32 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (or64i32r x t5)))
   
-  ((or (i32 x) op2)
+  ((ior (mode i64) (const i32 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (or64i32r x t5)))
 
-  ((or op1 op2)
+  ((ior (mode i64) op1 op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (or64rr op1 t5)))
 
   ;; xor
 
-  ((xor op1 (i8 x))
+  ((xor (mode i64) op1 (const i8 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (xor64i8r x t5)))
 
-  ((xor (i8 x) op2)
+  ((xor (mode i64) (const i8 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (xor64i8r x t5)))
 
-  ((xor op1 (i32 x))
+  ((xor (mode i64) op1 (const i32 x))
    (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (xor64i32r x t5)))
 
-  ((xor (i32 x) op2)
+  ((xor (mode i64) (const i32 x) op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (xor64i32r x t5)))
 
-  ((xor op1 op2)
+  ((xor (mode i64) op1 op2)
    (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (xor64rr op1 t5)))
 
   ;; shl
   
-  ((shl (i8 x) op2)
+  ((shl (mode i64) (const i8 x) op2)
    (temps t5) (out t5)
    ((mov64rr op2 t5)
     (shl64i8r x t5)))
 
   ;; shr
   
-  ((shr (i8 x) op2)
+  ((shr (mode i64) (const i8 x) op2)
    (temps t5) (out t5)
    ((mov64rr op2 t5)
     (shr64i8r x t5))))
+

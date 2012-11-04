@@ -1,6 +1,6 @@
 
 (declare (unit liveness)
-         (uses nodes munch arch utils))
+         (uses nodes arch utils))
 
 (use matchable)
 (use srfi-1)

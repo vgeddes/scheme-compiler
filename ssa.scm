@@ -156,7 +156,7 @@
     node))
 
 
-;; constructors for instuctions
+;; constructors for instructions
 
 (define (ssa-make-binop block op type x y)
   (let ((node

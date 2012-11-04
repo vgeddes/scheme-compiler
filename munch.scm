@@ -112,13 +112,21 @@
      (retnear))))
 
 (define (munch-statement node buf)
+  
+
+
   (match node
-    (($ selection-node 'app (target args))
-     (lower-call-conv target args buf))
-    (($ selection-node 'call (target args))
-     (lower-amd64-call-conv target args buf))
-    (($ selection-node 'return (arg))
-     (lower-return arg buf))
-    (else (munch-node node buf))))
+    (($ sl-instr 'call   _ target args _ _ _ _ attrs)
+    ;; (lower-amd64-call-conv target args buf attrs))
+    '())
+    (($ sl-instr 'assign _ (? symbol?) ($ sl-instr 'call) _ _ _ _ attrs)
+    ;; (lower-amd64-call-conv target args buf attrs))
+
+    '())
+    (($ sl-instr 'return _ value _ _ _ _ _ _)
+    ;; (lower-return value buf))
+    '())
+    (else 
+(munch-node node buf))))
 
 

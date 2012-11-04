@@ -20,19 +20,19 @@
 
 ;; LLIL: A machine executable language
 
-;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics at this level. 
+;;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics at this level. 
 
-;; A label for a block of code
+;;; A label for a block of code
 (define-struct label   (name))
 
-;; Function application. The compiler overloads this operation for primitive application.
-;; This operation never returns, but merely passes control to its continuation
+;;; Function application. The compiler overloads this operation for primitive application.
+;;; This operation never returns, but merely passes control to its continuation
 (define-struct app     (name args))
 
-;; Selects a value from a record and binds it to 'name in the continuation expression 'cexp
+;;; Selects a value from a record and binds it to 'name in the continuation expression 'cexp
 (define-struct select  (index record name cexp))
 
-;; Creates a record from a list of values and binds it to 'name in cexp
+;;; Creates a record from a list of values and binds it to 'name in cexp
 (define-struct record  (values name cexp))
 
 (define-struct block   (label code))
@@ -45,8 +45,8 @@
 (define-struct instr (descriptor operands use-list def-list))
 (define-struct instr-descriptor (name operand-spec format))
 
-;; represents an x86 memory addressing mode
+;;; represents an x86 memory addressing mode
 (define-struct x86-memref (base-reg disp offset-reg scale))
 
-(define-struct selection-node (operator operands))
+
 
