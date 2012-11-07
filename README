@@ -6,10 +6,12 @@ Current design
 ==============
 
 * CPS high-level IR [DONE]
-  Raw scheme source code undergoes macro-expansion, alpha-conversion, CPS conversion, 
-  lambda lifting, closure conversion, and then conversion to the Tree IR
+  Raw scheme source code undergoes macro-expansion, alpha-conversion, 
+  CPS conversion, lambda lifting, closure conversion, and then 
+  conversion to the Tree IR.
 * Tree-based low-level IR [DONE]
-  Currently only used as a convenient source IR for near-optimal instruction selection
+  Currently only used as a convenient source IR for near-optimal 
+  instruction selection
 * x86-64 code generator [DONE]
   Uses a near-optimal maximal munch algorithm
 * linear-scan register allocator [TODO]
