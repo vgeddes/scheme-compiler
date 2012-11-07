@@ -2,7 +2,7 @@
 PACKAGE := scc
 VERSION := 0.1
 
-objects := nodes.o pass.o main.o arch.o liveness.o munch.o utils.o selection.o ssa.o ssa-const.o ssa-ops.o ssa-types.o ssa-transforms.o
+objects := nodes.o pass.o main.o arch.o liveness.o munch.o utils.o selection.o
 
 tests_bin = tests/test-fast-match
 
@@ -17,7 +17,6 @@ nodes.o: struct-syntax.scm
 main.o:  struct-syntax.scm
 pass.o:  struct-syntax.scm
 arch.o:  x86-64.scm arch-syntax.scm
-ssa.o:   struct-syntax.scm
 selection.o:   struct-syntax.scm
 option-parser.o: struct-syntax.scm
 
