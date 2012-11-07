@@ -50,33 +50,38 @@
 
 
 (define (print-asm-block block port)
-  (fprintf port "(label ~a\n" (car block))
-  (let f ((instr* (cdr block)))
-    (match instr*
-      (() '())
-      ((i . i*)
-       (fprintf port "~a\n" (format-instr i))
-       (f i*)))))
+  (match block
+    (('block name succ code)
+     ;; print label
+     (fprintf port "~a:\n" name)
+     ;; print asm
+     (let f ((code code))
+       (match code
+         (() '())
+         ((c . c*)
+          (fprintf port "  ~a\t\t\t# live=~a\n" (format-instr c) (instr-data c))
+          (f c*))))
+     (fprintf port "\n")
+     ;; walk all successor blocks
+     (for-each (lambda (succ)
+                 (print-asm-block succ port))
+       succ))))
 
-(define (print-asm-func func port)
+(define (print-asm-context func port)
   (match func
-     (('function name args block*)
-      (print block*)
-       (let f ((block* block*))
-         (match block*
-           (() '())
-           ((b . b*)
-            (print-asm-block b port)
-            (f b*)))))))
-  
+    (('context name args entry)
+     (fprintf port "# context name=~a args=~a\n" name args)
+     (print-asm-block entry port))))
 
-(define (print-asm asm port)
-  (let k ((func* asm))
-     (match func*
-       (() '())
-       ((f . f*)
-        (print-asm-func f port)
-        (k f*)))))
+(define (print-asm mod port)
+  (match mod
+    (('module contexts)
+     (let k ((c* contexts))
+        (match c*
+          (() '())
+          ((c . c*)
+           (print-asm-context c port)
+           (k c*)))))))
             
 (define test-code-0
   '(let ((fib (lambda (n f)
@@ -99,8 +104,9 @@
     closure-convert
     flatten
     selection-convert
-    select-instructions))
-   ;; allocate-registers))
+    select-instructions
+    analyze-liveness-pass
+    allocate-registers-pass))
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))
@@ -108,9 +114,11 @@
         input
         (f (cdr pass) ((car pass) input)))))
 
-;;(print-asm (compile pipeline test-code-0) (current-output-port))
+(print-asm (compile pipeline test-code-0) (current-output-port))
 
-(pretty-print (compile pipeline test-code-0))
+
+
+;;(pretty-print (compile pipeline test-code-0))
 
 ;;(define-option-context *options*
   ;;

@@ -77,13 +77,15 @@
 
         ;; load
 
-        (('load mode base index)
-          `($ sl-instr 'load  ',(compile-pattern mode) ,(compile-pattern base) ,(compile-pattern index) _ _ _ _ _))
+        (('load mode addr)
+          `($ sl-instr 'load  ',(compile-pattern mode) ,(compile-pattern addr) _ _ _ _ _ _))
+
 
         ;; store
  
-        (('store mode value base index)
-          `($ sl-instr 'store ',(compile-pattern mode) ,(compile-pattern base) ,(compile-pattern index) ,(compile-pattern value) _ _ _ _))
+        (('store mode value addr)
+          `($ sl-instr 'store ',(compile-pattern mode) ,(compile-pattern value) ,(compile-pattern addr) _ _ _ _ _))
+
 
         ;; brc
 

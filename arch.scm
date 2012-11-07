@@ -12,14 +12,15 @@
 (define mem
   (lambda operands
     (match operands
-      ((base-reg disp)
-       (make-x86-memref base-reg disp #f #f))
-      ((base-reg disp offset-reg scale)
-       (make-x86-memref base-reg disp offset-reg scale)))))
+      ((base disp)
+       (make-x86-memref base disp)))))
 
 (define (format-operand op)
   (match op
 
+   ((? boolean? op)
+     (format "~s" op))
+   
    ;; $immediate
    ((? integer? op)
     (format "$~s" op))
@@ -29,16 +30,12 @@
     (format "%~s" op))
 
    ;; disp(%base)
-   (($ x86-memref base-reg disp #f #f)
-    (format "~s(%~s)" disp base-reg))
+   (($ x86-memref base disp)
+    (format "~s(%~s)" disp base))
 
-   ;; mov (%base, %offset, scale) %reg
-   (($ x86-memref base-reg #f offset-reg scale)
-    (format "(%~s,%~s,~s)" base-reg offset-reg scale))
-
-   ;; mov disp(%base, %offset, scale) %reg
-   (($ x86-memref base-reg disp offset-reg scale)
-    (format "~s(%~s,%~s,~s)" disp base-reg offset-reg scale))
+   ;; (%base)
+   (($ x86-memref base #f)
+    (format "(%~s)" base))
 
    ;; pc-relative jump
    (('label label)
@@ -57,16 +54,23 @@
   (car operand-spec))
 
 ;; order of operands not preserved
-(define (filter-operands-by-flag flag operand-specs operands)
+(define (filter-operands flag operand-specs operands)
   (fold (lambda (operand operand-spec x)
-          (if (memq flag (operand-spec-flags operand-spec))
-              (cons operand x)
-              x))
+          (cond 
+            ((memq flag (operand-spec-flags operand-spec))
+             (match operand 
+               (($ x86-memref (? symbol? reg) disp)
+                (cons reg x))
+               ((? symbol? reg)
+                (cons reg x))
+               (_ x)))
+             (else x)))
         '()
         operands
         operand-specs))
 
 (define (make-instr-with-descriptor descriptor operands)
-  (let ((use-list (filter-operands-by-flag 'in  (instr-descriptor-operand-spec descriptor) operands))
-        (def-list (filter-operands-by-flag 'out (instr-descriptor-operand-spec descriptor) operands)))
-    (make-instr descriptor operands use-list def-list)))
+  (let ((use-list (filter-operands 'in  (instr-descriptor-operand-spec descriptor) operands))
+        (def-list (filter-operands 'out (instr-descriptor-operand-spec descriptor) operands)))
+    (make-instr descriptor operands use-list def-list '())))
+

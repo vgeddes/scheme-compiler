@@ -22,7 +22,7 @@
   ;;
   ;; We move each positional arg to a constrained temp
   ;; Each temp will be constrained to a standard argument-passing register
-  ;; Standard argument passing registers (in order): rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15 
+  ;; Standard argument passing registers (in order): rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15
   ;;
   ;; We create a selection tree for each arg so we can produce efficient code for moving the arg
   ;; to the constrained temp. This is mostly useful for immediate -> register moves.
@@ -39,7 +39,7 @@
   ;;
   (let* ((temps     (map (lambda (arg) (gensym 't)) args))
          (arg-tree* (map (lambda (arg temp)
-                           (make-selection-node 'mov (list arg temp)))
+                           (sl-make-assign temp arg))
                          args
                          temps)))
     
@@ -49,11 +49,13 @@
               arg-tree*)
     
     ;; Select instruction for the branch
-    (munch-node (make-selection-node 'br (list target)) buf)))
+    (munch-node (sl-make-br target) buf)))
 
 (define (lower-amd64-call-conv target args buf)
   ;; Lower to standard amd64 ABI calling convention
-  ;; Used when calling C functions. This implemention is currently limited to passing a maximum of 4 integer arguments. 
+  ;; Used when calling C functions. This implemention is currently limited to passing a maximum of 4 integer arguments
+  ;;
+  ;; in rsi, rdi, rdx, rcx, r8, r9
   ;;
   ;; right now we don't do anything useful with the return value (%rax) of the callee
   ;;
@@ -74,7 +76,7 @@
   ;; copy the first 4 arguments into constrained temps
   (let* ((constrained-temps (map (lambda (arg) (gensym 't)) args))
          (arg-tree*         (map (lambda (arg constrained-temp)
-                                  (make-selection-node 'mov (list arg constrained-temp)))
+                                  (sl-make-assign constrained-temp arg))
                                 args
                                 constrained-temps)))
 
@@ -84,7 +86,7 @@
               arg-tree*))
 
   ;; Select instruction for the call
-  (munch-node (make-selection-node 'call (list target)) buf)
+  (buf-append! buf)
   
   ;; Pop saved values off stack into callee-save registers
   (buf-append! buf
@@ -100,7 +102,6 @@
      (pop64r 'rsi))))
 
 (define (lower-return arg buf)
-
   ;; select instruction for moving the return value into %rax
   (munch-node (make-selection-node 'mov (list arg 'rax)) buf)
 
@@ -113,12 +114,16 @@
 
 (define (munch-statement node buf)
   
-
-
   (match node
     (($ sl-instr 'call   _ target args _ _ _ _ attrs)
     ;; (lower-amd64-call-conv target args buf attrs))
-    '())
+     (case (sl-instr-attr node 'callconv)
+       ((tail)
+        (lower-call-conv target args buf))
+       ((cdecl)
+         '())
+        ;;(lower-amd64-call-conv target args buf))
+       (else (error 'munch-statement "should not reach here"))))
     (($ sl-instr 'assign _ (? symbol?) ($ sl-instr 'call) _ _ _ _ attrs)
     ;; (lower-amd64-call-conv target args buf attrs))
 

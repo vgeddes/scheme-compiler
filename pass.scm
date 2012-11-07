@@ -886,7 +886,7 @@
       (match values
         (() '())
         ((v . v*)
-         (let* ((st  (sl-build-store 'i64 v base (sl-constant-get 'i32 i))))
+         (let* ((st  (sl-build-store 'i64 v (sl-build-add 'i32 base (sl-constant-get 'i32 i)))))
           (sl-block-add-statement! block st)
            (f v* (+ i 1)))))))
   
@@ -894,15 +894,22 @@
     (struct-case node
       ((select index record name cexp)
        (let* ((record (convert-atom record))
-              (t1     (sl-build-load 'i64 record (sl-constant-get 'i32 index)))
+              (t1     (sl-build-load 'i64 (sl-build-add 'i32 record (sl-constant-get 'i32 (* 8 index)))))
               (t2     (sl-build-assign (variable-name name) t1)))
          (sl-block-add-statement! block t2)
          (walk-node cexp block)))
       ((record values name cexp)
-       (let* ((size (sl-constant-get 'i32 (length values)))
-              (t0   (sl-build-call 'cdecl (sl-make-label '__scm_alloc) (list size)))
-              (t1   (sl-build-assign (variable-name name) t0)))
+       (let* ((heap-ptr (gensym 't))
+              (t1   (sl-build-assign heap-ptr (sl-build-load 'i64 (sl-make-label 'heap_ptr))))
+              (t2   (sl-build-assign (variable-name name) (sl-make-temp heap-ptr)))
+              (t3   (sl-build-store 'i64 
+                      (sl-build-add 'i64 
+                        (sl-make-temp heap-ptr)
+                        (sl-constant-get 'i32 (* 8 (length values))))
+                      (sl-make-label 'heap_ptr))))
          (sl-block-add-statement! block t1)
+         (sl-block-add-statement! block t2)
+         (sl-block-add-statement! block t3)
          (emit-stores block (map (lambda (v) (convert-atom v)) values) (convert-atom name))
          (walk-node cexp block)))
       ((app name args)
@@ -935,7 +942,7 @@
               (walk-node cexp block)))
            ((return)
             (let* ((e1 (convert-atom (first args)))
-                   (t0 (sl-build-return e1)))
+                   (t0 (sl-build-add 'i64 e1 (sl-constant-get 'i32 0))))
               (sl-block-add-statement! block t0)
               '()))
            (else (assert-not-reached)))))))
@@ -972,37 +979,30 @@
 (define (select-instructions module)
   (struct-case module
     ((sl-module functions)
-     (map select-instructions-for-function functions))
+     `(module ,(map select-instructions-for-function functions)))
     (else (error 'select-instructions))))
 
 (define (select-instructions-for-function function)
 
-  (define (walk-block block asm-blocks)
-    (print "walking dis block")
-    (struct-case block
-      ((sl-block name head tail pred succ function)
-       (let* ((asm (box '())))
-         ;; munch each statement
-         (sl-for-each-statement 
-           (lambda (stm)
-             (munch-statement stm asm))
-             block)
-         ;; walk successor blocks
-        (if (null? (sl-block-succ block))
-             (reverse (cons `(,name ,@(box-ref asm)) asm-blocks))
-          (sl-for-each-block-succ
-            (lambda (block)
-              (walk-block block (cons `(,name ,@(box-ref asm)) asm-blocks)))
-            block))))
-       (else (error 'select-instructions-for-function "not a block" block))))
+  (define (walk-block block)
+    (let* ((code (box '())))
+      ;; munch each statement
+      (sl-for-each-statement 
+        (lambda (stm)
+          (munch-statement stm code))
+        block)
+      (list 'block (sl-block-name block)
+        ;; munch successor blocks
+        (map (lambda (succ)
+               (walk-block succ))
+             (sl-block-succ block))
+        (box-ref code)))) 
 
   (struct-case function
     ((sl-function name args entry module)
-     (print "walking dis func")
-     `(function ,name ,(map (lambda (tmp) (sl-temp-name tmp)) args)
-        ,(walk-block entry '())))
-
-    (else (error 'select-instructions-for-context))))
+     (let ((args (map (lambda (tmp) (sl-temp-name tmp)) args)))
+      `(context ,name ,args ,(walk-block entry))))
+    (else (error 'select-instructions-for-function))))
 
 (define (immediate-rep x)
   (cond

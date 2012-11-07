@@ -35,18 +35,19 @@
 ;;; Creates a record from a list of values and binds it to 'name in cexp
 (define-struct record  (values name cexp))
 
+
 (define-struct block   (label code))
 
 (define-struct module  (contexts))
 
-(define-struct node (id type value pred succ))
-(define-struct context (formals start blocks))
+(define-struct node     (id type value pred succ))
+(define-struct context  (formals start blocks))
 
-(define-struct instr (descriptor operands use-list def-list))
+(define-struct instr            (descriptor operands use-list def-list data))
 (define-struct instr-descriptor (name operand-spec format))
 
 ;;; represents an x86 memory addressing mode
-(define-struct x86-memref (base-reg disp offset-reg scale))
+(define-struct x86-memref (base disp))
 
 
 

@@ -222,28 +222,41 @@
   
   ;; memory load
   
-  ((assign (temp x) (load (mode i8) (temp base) (const i32 index)))
+  ((assign (temp x)
+     (load (mode i64) (add (mode i32)
+                        (temp base)
+                        (const i32 disp))))
    (temps) (out)
-   ((mov64mr (mem base index) x)))
+   ((mov64mr (mem base disp) x)))
 
-  ((assign (temp x) (load (mode i64) (temp base) (const i32 index)))
+  ((assign (temp x) (load (mode i64) (label disp)))
    (temps) (out)
-   ((mov64mr (mem base index) x)))
+   ((mov64mr (mem 'rip disp) x)))
 
   ;; memory store
 
-  ((store (mode i64) (temp x) (temp base) (const i32 index))
+  ((store (mode i64) (temp x) (add (mode i32)
+                                (temp base)
+                                (const i32 disp)))
    (temps) (out)
-   ((mov64rm x (mem base index))))
+   ((mov64rm x (mem base disp))))
 
-  ((store (mode i64) (label x) (temp base) (const i32 index))
-   (temps t1) (out)
+  ((store (mode i64) (label x) (add (mode i32)
+                                 (temp base)
+                                 (const i32 disp)))
+   (temps t1) (out t1)
    ((lea64mr (mem 'rip x) t1)
-    (mov64rm t1 (mem base index))))
+    (mov64rm t1 (mem base disp))))
 
-  ((store (mode i64) op1 (temp base) (const i32 index))
+  ((store (mode i64) op1 (add (mode i32)
+                                 (temp base)
+                                 (const i32 disp)))
    (temps) (out)
-   ((mov64rm op1 (mem base index))))
+   ((mov64rm op1 (mem base disp))))
+
+  ((store (mode i64) op1 (label disp))
+   (temps) (out)
+   ((mov64rm op1 (mem 'rip disp))))
 
   ;; assign
   
@@ -254,17 +267,17 @@
   ;; add
   
   ((add (mode i64) op1 (const i8 x))
-   (temps t5) (out)
+   (temps t5) (out t5)
    ((mov64rr op1 t5)
     (add64i8r x t5)))
 
   ((add (mode i64) (const i8 x) op2)
-   (temps t5) (out) 
+   (temps t5) (out t5) 
    ((mov64rr op2 t5)
     (add64i8r x t5)))
 
   ((add (mode i64) op1 (const i32 x))
-   (temps t5) (out) 
+   (temps t5) (out t5) 
    ((mov64rr op1 t5)
     (add64i32r x t5)))
   

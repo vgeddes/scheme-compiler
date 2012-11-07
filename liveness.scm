@@ -41,15 +41,17 @@
     (reverse instrs)))
 
 (define (print-cfg-with-formatters bfun ifun context)
-  (pretty-print
-   (list 'context (node-value (context-start context)) (context-formals context)
+(match context
+    (('context name args start)
+  (print
+   (list 'context (node-value start) args
          (map (lambda (block)
                 (cons (bfun block)
                       (list (map (lambda (instr)
                                    (ifun instr))
                                  (select-each-instr block)))))
               (select-each-block
-               (context-start context))))))
+               start)))))))
 
 (define (print-cfg context)
   (print-cfg-with-formatters
@@ -63,32 +65,28 @@
 
   (define (make-block block counter)
     (match block
-      ((label (successor* ...) (instr* ...))
+      (('block name (successor* ...) (instr* ...))
        (let* ((nodes
-               (map (lambda (instr)
-                      (make-node (counter) 'instr instr '() '()))
-                    instr*))
+                (map (lambda (instr)
+                       (make-node (counter) 'instr instr '() '()))
+                     instr*))
               (head
-               (car nodes))
+                (car nodes))
               (tail (car (reverse nodes)))
               (successors
-               (map (lambda (label)
-                      (cond
-                       ((assq label (context-blocks context))
-                        => (lambda (block)
-                             (make-block block counter)))
-                       (else (error 'make-block) (assert-not-reached 'succ label))))
-                    successor*))
+                (map (lambda (succ)
+                       (make-block succ counter))
+                     successor*))
               (basic-block
-               (make-node (counter) 'block label '() (list head))))
+                (make-node (counter) 'block name '() (list head))))
          
-         (let link-pred-succ ((cur (car nodes)) (rest (cdr nodes)))
+         (let f ((cur (car nodes)) (rest (cdr nodes)))
            (match rest
              (() cur)
              ((r . r*)
               (node-succ-set! cur (list r))
               (node-pred-set! r   (list cur))
-              (link-pred-succ r r*))))
+              (f r r*))))
 
          (node-succ-set! tail successors)
 
@@ -98,27 +96,16 @@
                    successors)
          basic-block))))
 
-  (struct-case context
-    ((context formals start blocks)
-     (cond 
-      ((assq start blocks)
-       => (lambda (block)
-            (let* ((start-node (make-block block (make-count-generator))))
-              (make-context formals start-node '()))))
-      (else (assert-not-reached 'build-cfg start))))
-    (else (assert-not-reached 'build-cfg))))
+  (match context
+    (('context name args start)
+     (let* ((start-node (make-block start (make-count-generator))))
+       (list 'context name args start-node)))))
+
 
 (define assert-not-reached
   (lambda (proc . irritants)
     (apply error `(assert-not-reached ,proc ,@irritants))))
 
-(define (allocate-registers module)
-  (struct-case module
-    ((module contexts)
-     (let ((contexts (map build-cfg contexts)))
-      (for-each analyse-liveness contexts)
-       (make-module contexts)))
-    (else (assert-not-reached 'allocate-registers))))
 
 (define (sort-reverse-pre-order node)
   (define (walk node)
@@ -138,8 +125,12 @@
    (else
     (instr-def-list (node-value node)))))
 
-(define (analyse-liveness context)
-  (let* ((node* (sort-reverse-pre-order (context-start context)))
+(define (analyze-liveness context)
+
+(match context
+  (('context name args entry)
+
+  (let* ((node* (sort-reverse-pre-order entry))
          (len  (length node*))
          (in   (make-vector len '()))
          (out  (make-vector len '()))
@@ -169,11 +160,51 @@
              (vector-ref def (node-id node))))))
      node*)
 
+   (for-each
+     (lambda (node)
+       (cond
+         ((eq? (node-type node) 'instr)
+          (instr-data-set! (node-value node) (vector-ref in (node-id node))))))
+     node*)
+
+
 ;;    (print-cfg-with-formatters
 ;;     (lambda (block)
 ;;        (node-value block))
-;;      (lambda (node)
-;;        (format-instr (node-value node)))
+ ;;     (lambda (node)
+;;        (format "~a\t\t~a" (format-instr (node-value node)) (vector-ref in (node-id node))))
 ;;      context)
 
-    in))
+    '()))))
+
+
+
+(define (allocate-registers-pass mod)
+
+ (define (analyze-defs block)
+    (match block
+      (('block name (successor* ...) (instr* ...))
+            (apply lset-union 
+               (cons eq? (append (map (lambda (instr)
+                                   (instr-def-list instr))
+                                  instr*)
+                                 (map analyze-defs successor*)))))))
+
+  (match mod
+    (('module contexts)
+     (for-each 
+        (lambda (cxt)
+           (match cxt
+             (('context name args start)
+              (pretty-print (analyze-defs start)))))
+         contexts)))
+        
+      mod)
+
+(define (analyze-liveness-pass mod)
+  (match mod
+    (('module contexts)
+     (let ((contexts (map build-cfg contexts)))
+       (for-each analyze-liveness contexts)
+       mod))))
+

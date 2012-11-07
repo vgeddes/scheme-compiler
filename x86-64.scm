@@ -40,7 +40,7 @@
   ;; lea
 
   (lea64mr
-   ((m64 in) (r64 in out))
+   ((m64 in) (r64 out))
    "leaq\t~a, ~a")
 
   ;; call
