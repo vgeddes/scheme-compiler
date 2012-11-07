@@ -1,12 +1,19 @@
 Another Scheme Compiler
 
-Design
-======
+Still in early development!
 
-* CPS HL-IR
-* SSA LL-IR
-* Code generator emits x86-64
-* Graph-colouring register allocator (TODO)
+Current design
+==============
+
+* CPS high-level IR [DONE]
+  Raw scheme source code undergoes macro-expansion, alpha-conversion, CPS conversion, 
+  lambda lifting, closure conversion, and then conversion to the Tree IR
+* Tree-based low-level IR [DONE]
+  Currently only used as a convenient source IR for near-optimal instruction selection
+* x86-64 code generator [DONE]
+  Uses a near-optimal maximal munch algorithm
+* linear-scan register allocator [TODO]
+* Assembler [TODO]
 
 Written in Scheme!
 
