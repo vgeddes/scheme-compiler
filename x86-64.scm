@@ -9,7 +9,7 @@
 ;; i8   8-bit immediate
 ;; i32  32-bit immediate
 ;; i64  64-bit immediate
-;; m64  64-bit memory reference (using any addressing mode)
+;; m64  64-bit memory reference (using [base + disp] addressing)
 ;; r8   8-bit register
 ;; r64  64-bit register
 
@@ -46,7 +46,7 @@
   ;; call
 
   (callrel32
-   ((i32 in))
+   ((i32))
    "call\t~a")
 
   ;; add
@@ -56,11 +56,11 @@
    "addq\t~a, ~a")
 
   (add64i8r
-   ((i8 in) (r64 in out))
+   ((i8) (r64 in out))
    "addq\t~a, ~a")
 
   (add64i32r
-   ((i32 in) (r64 in out))
+   ((i32) (r64 in out))
    "addq\t~a, ~a")
 
   ;; sub
@@ -70,11 +70,11 @@
    "subq\t~a, ~a")
 
   (sub64i8r
-   ((i8 in) (r64 in out))
+   ((i8) (r64 in out))
    "subq\t~a, ~a")
 
   (sub64i32r
-   ((i32 in) (r64 in out))
+   ((i32) (r64 in out))
    "subq\t~a, ~a")
 
   ;; and
@@ -84,11 +84,11 @@
    "andq\t~a, ~a")
 
   (and64i8r
-   ((i8 in) (r64 in out)) 
+   ((i8) (r64 in out)) 
    "andq\t~a, ~a")
 
   (and64i32r
-   ((i32 in) (r64 in out))
+   ((i32) (r64 in out))
    "andq\t~a, ~a")
   
   ;; or
@@ -98,11 +98,11 @@
    "orq\t~a, ~a")
 
   (or64i8r
-   ((i8 in) (r64 in out))
+   ((i8) (r64 in out))
    "orq\t~a, ~a")
 
   (or64i32r
-   ((i32 in) (r64 in out))
+   ((i32) (r64 in out))
    "orq\t~a, ~a")
 
   ;; xor
@@ -112,19 +112,19 @@
    "xorq\t~a, ~a")
 
   (xor64i32r
-   ((i32 in) (r64 in out))
+   ((i32) (r64 in out))
    "xorq\t~a, ~a")
 
   ;; shr
 
   (shr64i8r
-   ((i8 in) (r64 in out))
+   ((i8) (r64 in out))
    "shrq\t~a, ~a")
 
   ;; shl
 
   (shl64i8r
-   ((i8 in) (r64 in out))
+   ((i8) (r64 in out))
    "shlq\t~a, ~a")
   
   ;; mov
@@ -134,19 +134,19 @@
    "movq\t~a, ~a")
 
   (mov64rm
-   ((r64 in) (m64 out))
+   ((r64 in) (m64))
    "movq\t~a, ~a")
 
   (mov64mr
-   ((m64 in) (r64 out))
+   ((m64) (r64 out))
    "movq\t~a, ~a")
 
   (mov64i8r
-   ((i8 in) (r64 out))
+   ((i8) (r64 out))
    "movq\t~a, ~a")
 
   (mov64i32r
-   ((i32 in) (r64 out))
+   ((i32) (r64 out))
    "movq\t~a, ~a")
 
   ;; setCC
@@ -182,11 +182,11 @@
    "cmpq\t~a, ~a")
 
   (cmp64i8r
-   ((i8 in) (r64 in))
+   ((i8) (r64 in))
    "cmpq\t~a, ~a")
 
   (cmp64i32r
-   ((i32 in) (r64 in))
+   ((i32) (r64 in))
    "cmpq\t~a, ~a")
 
   ;; jmp
@@ -202,33 +202,33 @@
   ;; jCC
 
   (jo32rel32
-   ((i32 in))
+   ((i32))
    "jo\t~a")
 
   (jno32rel32
-   ((i32 in))
+   ((i32))
    "jno\t~a")
 
   (je32rel32
-   ((i32 in))
+   ((i32))
    "je\t~a")
 
   (jne32rel32
-   ((i32 in))
+   ((i32))
    "jne\t~a")
 
   (jl32rel32
-   ((i32 in))
+   ((i32))
    "jl\t~a")
 
   (jle32rel32
-   ((i32 in))
+   ((i32))
    "jle\t~a")
 
   (jge32rel32
-   ((i32 in))
+   ((i32))
    "jge\t~a")
 
   (jg32rel32
-   ((i32 in))
+   ((i32))
    "jg\t~a"))

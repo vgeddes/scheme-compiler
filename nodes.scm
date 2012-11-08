@@ -43,11 +43,18 @@
 (define-struct node     (id type value pred succ))
 (define-struct context  (formals start blocks))
 
-(define-struct instr            (descriptor operands use-list def-list data))
-(define-struct instr-descriptor (name operand-spec format))
 
-;;; represents an x86 memory addressing mode
-(define-struct x86-memref (base disp))
+;; instruction
+(define-struct machine-instr            (descriptor op1 op2 op3 next prev data))
+(define-struct machine-descriptor       (name format defs-get uses-get))
 
+;; operands 
+(define-struct machine-address  (base disp))
+(define-struct machine-temp     (name constrained data))
+(define-struct machine-constant (value))
+(define-struct machine-label    (value))
 
+;; data
+
+(define-struct machine-data     (label size)) 
 

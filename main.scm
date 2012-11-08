@@ -105,8 +105,7 @@
     flatten
     selection-convert
     select-instructions
-    analyze-liveness-pass
-    allocate-registers-pass))
+    analyze-liveness-pass))
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))

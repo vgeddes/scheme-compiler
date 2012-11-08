@@ -177,9 +177,19 @@
 
     '()))))
 
-
+(define-struct info (name range data))
 
 (define (allocate-registers-pass mod)
+
+ (define *temp-info* '())
+
+ (define (temp-info tmp)
+   (cond
+     ((assq tmp *temp-info*) => cdr)
+     (else 
+       (let ((info (make-info tmp (cons -1 -1) '())))
+          (set! *temp-info* (cons (cons tmp info) *temp-info*))
+          info))))
 
  (define (analyze-defs block)
     (match block
@@ -190,16 +200,43 @@
                                   instr*)
                                  (map analyze-defs successor*)))))))
 
+  (define (compute-live-range-for-temp temp start)
+    (let f ((block start) (id-gen (make-count-generator)))
+      (match block
+        (('block name (successor* ...) (instr* ...))
+           (let g ((i* instr*))
+             (match i*
+                (() '())
+                ((i . i*)
+                 (let ((id (id-gen)))    
+                  (cond
+                     ((memq temp (instr-data i))
+                      (let ((info (temp-info temp)))
+                        (match (info-range info)
+                          ((start . end)
+                           (if (< start 0)
+                             (info-range-set! info (cons id end)))
+                           (if (> id end)
+                             (info-range-set! info (cons (car (info-range info)) id)))))))))
+                  (g i*))))
+            (for-each (lambda (block) 
+                        (f block id-gen))
+               successor*))))
+        (info-range (temp-info temp)))
+
   (match mod
     (('module contexts)
      (for-each 
         (lambda (cxt)
            (match cxt
              (('context name args start)
-              (pretty-print (analyze-defs start)))))
+              (let ((defs (analyze-defs start)))
+                 (for-each
+                   (lambda (def)
+                       (pretty-print (list def (compute-live-range-for-temp def start))))
+                   defs)))))
          contexts)))
-        
-      mod)
+  mod)
 
 (define (analyze-liveness-pass mod)
   (match mod

@@ -69,6 +69,11 @@
         operands
         operand-specs))
 
+(define (instr-temp-uses instr))
+
+(define (instr-temp-defs instr))
+ 
+
 (define (make-instr-with-descriptor descriptor operands)
   (let ((use-list (filter-operands 'in  (instr-descriptor-operand-spec descriptor) operands))
         (def-list (filter-operands 'out (instr-descriptor-operand-spec descriptor) operands)))
