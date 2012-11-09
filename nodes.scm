@@ -44,6 +44,12 @@
 (define-struct context  (formals start blocks))
 
 
+;; high-level structures 
+(define-struct machine-context  (name args start))
+
+
+(define-struct machine-block    (name head tail successors))
+
 ;; instruction
 (define-struct machine-instr            (descriptor op1 op2 op3 next prev data))
 (define-struct machine-descriptor       (name format defs-get uses-get))

@@ -8,6 +8,52 @@
 (include "arch-syntax")
 (include "x86-64")
 
+;; high-level structures 
+(define-struct machine-module   (contexts))
+
+;; high-level structures 
+(define-struct machine-context  (name args start))
+
+
+(define-struct machine-block    (name head tail successors))
+
+;; instruction
+(define-struct machine-instr            (descriptor op1 op2 op3 next prev data))
+(define-struct machine-descriptor       (name format defs-get uses-get))
+
+
+(define (machine-temp-uses instr))
+
+(define (machine-temp-defs instr))
+ 
+
+
+
+
+
+
+;; operands 
+(define-struct machine-address  (base disp))
+(define-struct machine-temp     (name constrained data))
+(define-struct machine-constant (value))
+(define-struct machine-label    (value))
+
+
+
+
+
+
+
+
+
+
+
+
+;; data
+
+(define-struct machine-data     (label size)) 
+
+
 
 (define mem
   (lambda operands
@@ -69,10 +115,7 @@
         operands
         operand-specs))
 
-(define (instr-temp-uses instr))
 
-(define (instr-temp-defs instr))
- 
 
 (define (make-instr-with-descriptor descriptor operands)
   (let ((use-list (filter-operands 'in  (instr-descriptor-operand-spec descriptor) operands))

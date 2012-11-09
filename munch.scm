@@ -1,6 +1,6 @@
   
 (declare (unit munch)
-         (uses arch nodes))
+         (uses machine nodes))
 
 (use matchable)
 (use srfi-1)
