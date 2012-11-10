@@ -210,7 +210,7 @@
 
   ((load (mode ptr64) (label l1))
    (temps t1) (out t1)
-   ((lea64mr (addr (disp l1)) (vreg t1))))
+   ((lea64mr (addr (disp l1)) t1)))
 
   ((assign (temp x) (load (mode ptr64) (label l1)))
    (temps) (out)
@@ -241,7 +241,7 @@
                         (const i32 c1)))
    (temps t2) (out t2)
    ((mov64mr (addr (base (vreg t1)) (disp c1))
-             (vreg t2))))
+             t2)))
 
   ((assign (temp x)
      (load (mode i64) (add (mode i32)
@@ -262,13 +262,13 @@
                                 (const i32 c1)))
    (temps) (out)
    ((mov64rm (vreg x) 
-             (addr (base t1) (disp c1)))))
+             (addr (base (vreg t1)) (disp c1)))))
 
   ((store (mode i64) op1 (add (mode i32)
                                  (temp t1)
                                  (const i32 c1)))
    (temps) (out)
-   ((mov64rm op1 (addr (base t1) (disp c1)))))
+   ((mov64rm op1 (addr (base (vreg t1)) (disp c1)))))
 
   ((store (mode i64) op1 (label l1))
    (temps) (out)

@@ -625,9 +625,19 @@
       (match values
         (() '())
         ((v . v*)
-         (let* ((st  (tree-build-store 'i64 v (tree-build-add 'i32 base (tree-constant-get 'i32 i)))))
-         ;; (tree-block-add-statement! block st)
-           (f v* (+ i 1)))))))
+           (tree-block-add-statement! block
+             (cond
+               ((tree-constant? v)
+                (tree-build-store 'i64 v (tree-build-add 'i32 base (tree-constant-get 'i32 i))))              
+               ((tree-temp? v)
+                (tree-build-store 'i64
+                  v (tree-build-add 'i32 base (tree-constant-get 'i32 i))))
+               ((tree-label? v)        
+                (tree-build-store 'i64
+                  (tree-build-load 'ptr64 v) (tree-build-add 'i32 base (tree-constant-get 'i32 i))))
+               (else (assert-not-reached))))
+
+             (f v* (+ i 1))))))
   
   (define (walk-node node block)
     (struct-case node
@@ -681,7 +691,7 @@
               (walk-node cexp block)))
            ((return)
             (let* ((e1 (convert-atom (first args)))
-                   (t0 (tree-build-add 'i64 e1 (tree-constant-get 'i32 0))))
+                   (t0 (tree-build-return e1)))
               (tree-block-add-statement! block t0)
               '()))
            (else (assert-not-reached)))))))
@@ -704,15 +714,13 @@
   (struct-case node
     ((fix defs body)
      (let* ((mod  (tree-make-module))
-            (defs (cons (make-lambda 'MAIN '() body '()) defs)))
+            (defs (cons (make-lambda '__scheme_enter '() body '()) defs)))
        
        ;; convert the definitions into function bodies
        (for-each (lambda (def)
                (tree-module-add-function! mod (selection-convert-lambda def mod)))
                  defs)
-
-    ;;  (tree-module-print mod (current-output-port))
-      mod
+      mod 
        ))))
 
 (define (select-instructions module)

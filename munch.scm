@@ -8,6 +8,10 @@
 (include "munch-syntax")
 (include "patterns")
 
+(define (lower-call-conv-ret block value)
+
+  (machine-block-append-instr! block (mov64rr (vreg (tree-temp-name value)) (vreg 'rax)))
+  (machine-block-append-instr! block (retnear)))
 
 (define (lower-call-conv block target args)
   ;;
@@ -99,19 +103,10 @@
      (pop64r 'rdi)
      (pop64r 'rsi))))
 
-(define (lower-return arg buf)
-  ;; select instruction for moving the return value into %rax
-  (munch-node (make-selection-node 'mov (list arg 'rax)) buf)
-
-  (buf-append! buf
-    (list 
-     ;; epilogue
-     (mov64rr 'rbp 'rsp)
-     (pop64r 'rbp)
-     (retnear))))
-
 (define (munch-statement block tree)
   (match tree
+    (($ tree-instr 'return _ value)
+     (lower-call-conv-ret block value))
     (($ tree-instr 'call _ target args)
     ;; (lower-amd64-call-conv target args buf attrs))
      (case (tree-instr-attr tree 'callconv)
