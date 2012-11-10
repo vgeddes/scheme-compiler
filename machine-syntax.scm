@@ -2,7 +2,15 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
-(define-syntax define-arch-instructions
+
+(define-syntax assert-not-reached
+  (lambda (e r c)
+     `(,(r 'assert) #f "should not reach here")))
+
+
+
+
+(define-syntax define-machine-instructions
   (lambda (e r c)
 
 ;; operand types
@@ -13,64 +21,86 @@
 ;; r8   8-bit register
 ;; r64  64-bit register
 
-    ;; scan operand spec string and determine which operands are used, defined,
-    ;; and create a bunch of functions for accessing or modifying operands
-    (define (generate-instr-funcs spec*)
-       (let f ((i 0) (s* spec*) (uses '()) (defs '()) (verifiers '()))
-         (match spec*
-           (() '())
-           ((s . s*)
-            (match s
-               ((or (i8 flag* ...) (i32 flag* ...) (i64 flag* ...))
-                (cons 'machine-constant? verifiers))
-               ((m64 flag* ...)
-                (cons 'machine-address? verifiers))
-               ((r64 flag* ....)
-                (cons 'machine-temp? verifiers))
+    (define (parse-operand-type type)
+      (case type
+        ((i8 i32 i64)
+          'machine-imm?)
+        ((m32 m64)
+          'machine-addr-x86-64?)
+        ((r8 r32 r64)
+          'machine-vreg?)
+        (else (assert-not-reached))))
 
-             
- 
+    (define (operand-is-use? flags)
+      (and (memq 'in flags)  #t))
 
-            (f (+ i 1) s*)))))
-            
-          
+    (define (operand-is-def? flags)
+      (and (memq 'out flags) #t))
 
-        
+    ;; scan operand spec string and return the following three lists
+    ;;
+    ;;  list of verifier functions for each operand
+    ;;  list of operand indices of temps which are USED
+    ;;  list of operand indices of temps which are DEFINED
 
-
-
-
-
+    (define (parse-operand-specs operand-spec*)
+       (let f ((os* operand-spec*) (i 0) (uses '()) (defs '()) (verifiers '()))
+         (match os*
+           (()
+            (list 
+              (reverse verifiers)
+              (reverse uses)
+              (reverse defs)))
+           ((os . os*)
+            (match os
+               ((type flag* ...)
+                 (let ((verifier (parse-operand-type type))
+                       (uses      (if (operand-is-use? flag*)
+                                     (cons i uses) uses))
+                       (def       (if (operand-is-def? flag*)
+                                     (cons i defs) defs)))
+                    (f os* (+ i 1) uses defs (cons verifier verifiers)))))))))
 
 
     (define (generate-instr-descriptor name fmt operand-spec*)
-      (let ((descriptor (string->symbol (format "~s-descriptor" name)))
-            (%define                     (r 'define))
-            (%lambda                     (r 'lambda))
-            (%let                        (r 'let))
-            (%make-instr-with-descriptor (r 'make-instr-with-descriptor))
-            (%make-instr-descriptor      (r 'make-instr-descriptor)))
+      (let* ((descriptor                (string->symbol (format "~s-descriptor" name)))
+             (operand-info              (parse-operand-specs operand-spec*))
+             (verifiers                 (first operand-info))
+             (uses                      (second operand-info))
+             (defs                      (third operand-info))
+             (%define                   (r 'define))
+             (%lambda                   (r 'lambda))
+             (%let                      (r 'let))
+             (%make-machine-instr       (r 'make-machine-instr))
+             (%make-machine-descriptor  (r 'make-machine-descriptor)))
+        
         `((,%define ,descriptor
-            (make-instr-descriptor
+            (make-machine-descriptor
              ',name
              ',fmt
-             ',operand-spec*))
+             ',verifiers
+             ',uses
+             ',defs))
           (,%define ,name
             (,%lambda operands
-              (,%make-instr-with-descriptor ,descriptor operands))))))
+              (make-machine-instr ,descriptor operands '() '() '()))))))
            
     
 
     (match e
-      (('define-arch-instructions arch instr-def* ...)
+      (('define-machine-instructions arch instr-def* ...)
        (let ((compiled-definitions
               (apply append
                 (map (lambda (instr-def)
                        (match instr-def
                          ((name (operand-spec* ...) fmt)
-                          (generate-instr-descriptor name operand-spec* fmt))))
+                          (generate-instr-descriptor name fmt operand-spec*))))
                      instr-def*)))
              (%begin (r 'begin)))
          `(,%begin
            ,@compiled-definitions))))))
+
+
+;; utils
+
 

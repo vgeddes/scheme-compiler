@@ -386,8 +386,7 @@
   (tree-instr-in2 x v))
 
 (define (tree-call-format node)
-  (sprintf "(call ~a ~a (~a))"
-          (tree-instr-mode node)
+  (sprintf "(call ~a (~a))"
           (tree-instr-format (tree-call-target node))
           (string-join
             (map (lambda (arg)

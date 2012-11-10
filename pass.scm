@@ -626,7 +626,7 @@
         (() '())
         ((v . v*)
          (let* ((st  (tree-build-store 'i64 v (tree-build-add 'i32 base (tree-constant-get 'i32 i)))))
-          (tree-block-add-statement! block st)
+         ;; (tree-block-add-statement! block st)
            (f v* (+ i 1)))))))
   
   (define (walk-node node block)
@@ -700,7 +700,7 @@
        (walk-node body entry)
        fun))))
            
-(define (selection-convert node)
+(define (tree-convert node)
   (struct-case node
     ((fix defs body)
      (let* ((mod  (tree-make-module))
@@ -718,30 +718,31 @@
 (define (select-instructions module)
   (struct-case module
     ((tree-module functions)
-     `(module ,(map select-instructions-for-function functions)))
+     (make-machine-module
+        (map select-instructions-for-function functions)))
     (else (error 'select-instructions))))
 
 (define (select-instructions-for-function function)
 
   (define (walk-block block)
-    (let* ((code (box '())))
+    (let* ((successors  (map (lambda (succ)
+                               (walk-block succ))
+                          (tree-block-succ block)))
+           (machine-block (make-machine-block (tree-block-name block) '() '() successors)))
       ;; munch each statement
       (tree-for-each-statement 
         (lambda (stm)
-          (munch-statement stm code))
+          (munch-statement machine-block stm))
         block)
-      (list 'block (tree-block-name block)
-        ;; munch successor blocks
-        (map (lambda (succ)
-               (walk-block succ))
-             (tree-block-succ block))
-        (box-ref code)))) 
+      machine-block))
 
   (struct-case function
     ((tree-function name args entry module)
-     (let ((args (map (lambda (tmp) (tree-temp-name tmp)) args)))
-      `(context ,name ,args ,(walk-block entry))))
-    (else (error 'select-instructions-for-function))))
+     (let ((args (map (lambda (tmp) 
+                        (make-machine-vreg (tree-temp-name tmp))) 
+                      args)))
+      (make-machine-context name args (walk-block entry))))
+    (else (assert-not-reached))))
 
 (define (immediate-rep x)
   (cond

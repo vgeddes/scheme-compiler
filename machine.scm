@@ -1,124 +1,129 @@
 
-(declare (unit arch)
+(declare (unit machine)
          (uses nodes))
 
 (use matchable)
 (use srfi-1)
 
-(include "arch-syntax")
+(include "machine-syntax")
+(include "struct-syntax")
 (include "x86-64")
 
-;; high-level structures 
-(define-struct machine-module   (contexts))
+;; formatting
 
-;; high-level structures 
-(define-struct machine-context  (name args start))
+(define (machine-module-print mod port)
+  (machine-context-for-each
+     (lambda (context)
+       (machine-context-print context port))
+     mod))
 
+(define (machine-context-print context port)
+  (struct-case context
+    ((machine-context name args entry)
+     (fprintf port "# context name=~a args=~a\n" name (map (lambda (arg) (machine-operand-format arg)) args))
+     (machine-block-for-each
+        (lambda (block)
+            (machine-block-print block port))
+        context))))
 
-(define-struct machine-block    (name head tail successors))
+(define (machine-block-print block port)
+  (struct-case block
+    ((machine-block name head tail succ)
+     ;; print label
+     (fprintf port "~a:\n" name)
+     ;; print code
+     (machine-instr-for-each
+        (lambda (instr)
+           (machine-instr-print instr port))
+         block)
+     (fprintf port "\n"))))
 
-;; instruction
-(define-struct machine-instr            (descriptor op1 op2 op3 next prev data))
-(define-struct machine-descriptor       (name format defs-get uses-get))
+(define (machine-instr-print instr port)
+  (fprintf port "  ")
+  (fprintf port
+    (apply format
+           (cons
+            (machine-descriptor-format (machine-instr-descriptor instr))
+            (map machine-operand-format (machine-instr-ops instr)))))
+  (fprintf port "\n"))
 
-
-(define (machine-temp-uses instr))
-
-(define (machine-temp-defs instr))
- 
-
-
-
-
-
-
-;; operands 
-(define-struct machine-address  (base disp))
-(define-struct machine-temp     (name constrained data))
-(define-struct machine-constant (value))
-(define-struct machine-label    (value))
-
-
-
-
-
-
-
-
-
-
-
-
-;; data
-
-(define-struct machine-data     (label size)) 
-
-
-
-(define mem
-  (lambda operands
-    (match operands
-      ((base disp)
-       (make-x86-memref base disp)))))
-
-(define (format-operand op)
+(define (machine-operand-format op)
   (match op
+   ;; machine address
+   (($ machine-addr-x86-64 #f disp)
+     (format "~s(%rip)" disp))
 
-   ((? boolean? op)
-     (format "~s" op))
+   (($ machine-addr-x86-64 ($ machine-vreg name) #f)
+     (format "(%~s)" name))
+
+   (($ machine-addr-x86-64 ($ machine-vreg name) disp)
+     (format "~s(%~s)" disp name))
    
-   ;; $immediate
-   ((? integer? op)
-    (format "$~s" op))
+   ;; machine constant
+   (($ machine-imm size value)
+    (format "~s" value))
 
-   ;; %register
-   ((? symbol? op)
-    (format "%~s" op))
+   ;; machine vreg
+   (($ machine-vreg name)
+    (format "%~s" name))
 
-   ;; disp(%base)
-   (($ x86-memref base disp)
-    (format "~s(%~s)" disp base))
+   (_ (pretty-print op) (error "no matching pattern")))) 
 
-   ;; (%base)
-   (($ x86-memref base #f)
-    (format "(%~s)" base))
 
-   ;; pc-relative jump
-   (('label label)
-    (format "~s(%rip)" label))))
+;; iteration
 
-(define (format-instr instr)
-  (apply format
-         (cons
-          (instr-descriptor-format (instr-descriptor instr))
-          (map format-operand (instr-operands instr)))))
+(define (machine-context-for-each f mod)
+  (for-each f (machine-module-contexts mod)))
 
-(define (operand-spec-flags operand-spec)
-  (cdr operand-spec))
 
-(define (operand-spec-type operand-spec)
-  (car operand-spec))
+(define (machine-block-for-each f context)
+  (define (visit-block block f)
+    (let ((succ (machine-block-successors block)))
+      (f block)
+      (for-each (lambda (succ)
+                  (visit-block succ f))
+                succ)))
+    (visit-block (machine-context-start context) f))
 
-;; order of operands not preserved
-(define (filter-operands flag operand-specs operands)
-  (fold (lambda (operand operand-spec x)
-          (cond 
-            ((memq flag (operand-spec-flags operand-spec))
-             (match operand 
-               (($ x86-memref (? symbol? reg) disp)
-                (cons reg x))
-               ((? symbol? reg)
-                (cons reg x))
-               (_ x)))
-             (else x)))
-        '()
-        operands
-        operand-specs))
+
+(define (machine-instr-for-each f block)
+  (let ((head (machine-block-head block)))
+    (let walk ((x head))
+      (cond
+       ((not (null? x))
+        (f x)
+        (walk (machine-instr-next x)))))))
 
 
 
-(define (make-instr-with-descriptor descriptor operands)
-  (let ((use-list (filter-operands 'in  (instr-descriptor-operand-spec descriptor) operands))
-        (def-list (filter-operands 'out (instr-descriptor-operand-spec descriptor) operands)))
-    (make-instr descriptor operands use-list def-list '())))
+(define (machine-block-append-instr! block instr)
+  (cond
+    ((and (null? (machine-block-head block))
+          (null? (machine-block-tail block)))
+     (machine-block-head-set! block instr)
+     (machine-block-tail-set! block instr))
+    (else
+     (let ((tail (machine-block-tail block)))
+       (machine-instr-prev-set! instr tail)
+       (machine-instr-next-set! tail instr)
+       (machine-block-tail-set! block instr))))
+  block)
+
+;; utils
+(define (machine-block-append instr*)
+  (cond
+    ((null? instr) '())
+    ((= (length instr*) 1)
+     (car instr*))
+    (else
+     (let f ((prev (first instr*))
+             (next (second instr*)) 
+             (rest (cddr instr*))) 
+        (machine-instr-set-next! prev next)
+        (machine-instr-set-prev! next prev)
+        (if (null? rest)
+            (car instr*) 
+            (f next (car rest) (cdr rest))))))) 
+
+
 

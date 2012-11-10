@@ -8,10 +8,8 @@
 (include "munch-syntax")
 (include "patterns")
 
-(define (buf-append! buf data)
-  (box-set! buf (append (box-ref buf) data)))
 
-(define (lower-call-conv target args buf)
+(define (lower-call-conv block target args)
   ;;
   ;; Lower to our calling convention for x86-64
   ;;
@@ -39,17 +37,17 @@
   ;;
   (let* ((temps     (map (lambda (arg) (gensym 't)) args))
          (arg-tree* (map (lambda (arg temp)
-                           (sl-make-assign temp arg))
+                           (tree-make-assign temp arg))
                          args
                          temps)))
     
     ;; Select instructions for moving args to constrained temps
     (for-each (lambda (arg-tree)
-                (munch-node arg-tree buf))
+                (munch-tree block arg-tree))
               arg-tree*)
     
     ;; Select instruction for the branch
-    (munch-node (sl-make-br target) buf)))
+    (munch-tree block (tree-make-br target))))
 
 (define (lower-amd64-call-conv target args buf)
   ;; Lower to standard amd64 ABI calling convention
@@ -76,7 +74,7 @@
   ;; copy the first 4 arguments into constrained temps
   (let* ((constrained-temps (map (lambda (arg) (gensym 't)) args))
          (arg-tree*         (map (lambda (arg constrained-temp)
-                                  (sl-make-assign constrained-temp arg))
+                                  (tree-make-assign constrained-temp arg))
                                 args
                                 constrained-temps)))
 
@@ -112,26 +110,23 @@
      (pop64r 'rbp)
      (retnear))))
 
-(define (munch-statement node buf)
-  
-  (match node
-    (($ sl-instr 'call   _ target args _ _ _ _ attrs)
+(define (munch-statement block tree)
+  (match tree
+    (($ tree-instr 'call _ target args)
     ;; (lower-amd64-call-conv target args buf attrs))
-     (case (sl-instr-attr node 'callconv)
+     (case (tree-instr-attr tree 'callconv)
        ((tail)
-        (lower-call-conv target args buf))
+         (lower-call-conv block target args))
        ((cdecl)
          '())
         ;;(lower-amd64-call-conv target args buf))
        (else (error 'munch-statement "should not reach here"))))
-    (($ sl-instr 'assign _ (? symbol?) ($ sl-instr 'call) _ _ _ _ attrs)
+    (($ tree-instr 'assign _ (? symbol?) ($ tree-instr 'call) _ _ _ _ attrs)
     ;; (lower-amd64-call-conv target args buf attrs))
-
     '())
-    (($ sl-instr 'return _ value _ _ _ _ _ _)
+    (($ tree-instr 'return _ value _ _ _ _ _ _)
     ;; (lower-return value buf))
     '())
-    (else 
-(munch-node node buf))))
+    (_ (munch-tree block tree))))
 
 

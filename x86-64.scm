@@ -17,12 +17,12 @@
 ;; in   operand read during instruction execution
 ;; out  operand written to during instruction execution
 
-(define-arch-instructions x86-64
+(define-machine-instructions x86-64
 
  ;; ret
   
   (retnear
-   (())
+   ()
    "ret")
 
   ;; push
@@ -149,6 +149,10 @@
    ((i32) (r64 out))
    "movq\t~a, ~a")
 
+  (mov64i64r
+   ((i64) (r64 out))
+   "movq\t~a, ~a")
+
   ;; setCC
 
   (sete8r
@@ -192,7 +196,7 @@
   ;; jmp
 
   (jmp64rel32
-   (i32)
+   ((i32))
    "jmp\t~a")
   
   (jmp64r

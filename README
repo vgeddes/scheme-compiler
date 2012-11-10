@@ -10,12 +10,39 @@ Current design
   CPS conversion, lambda lifting, closure conversion, and then 
   conversion to the Tree IR.
 * Tree-based low-level IR [DONE]
-  Currently only used as a convenient source IR for near-optimal 
-  instruction selection
+  Currently only used as a convenient source IR for instruction selection
 * x86-64 code generator [DONE]
   Uses a near-optimal maximal munch algorithm
 * linear-scan register allocator [TODO]
 * Assembler [TODO]
+* High-level optimizations (elimination of CPS artifacts, etc)
 
 Written in Scheme!
+
+Supported Language
+==================
+
+Primitives: begin, let, and, or, not, if, lambda
+Data: closures, fixnums
+
+Build
+=====
+
+Dependencies: Chicken Scheme
+
+$ make
+
+
+Usage
+=====
+
+Currently the `scc' executable takes an input file containing a Scheme program, and dumps the generated x86-64 assembly to standard out. Early days!
+
+$ scc FILE
+
+Example: Scheme program which calculates fibonacci(23)
+
+$ scc tests/fibonacci-001.scm
+
+
 

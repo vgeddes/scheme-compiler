@@ -16,11 +16,11 @@ scc: $(objects)
 nodes.o: struct-syntax.scm
 main.o:  struct-syntax.scm
 pass.o:  struct-syntax.scm
-arch.o:  x86-64.scm arch-syntax.scm
+machine.o:  x86-64.scm machine-syntax.scm
 tree.o:   struct-syntax.scm
-option-parser.o: struct-syntax.scm
+option-parser.o: struct-syntax.
 
-munch.o: patterns.scm munch-syntax.scm
+munch.o: patterns.scm munch-syntax.scm nodes.scm
 
 # default rule
 

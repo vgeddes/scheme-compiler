@@ -1,6 +1,6 @@
 
 (declare (unit liveness)
-         (uses nodes arch utils))
+         (uses nodes machine utils))
 
 (use matchable)
 (use srfi-1)

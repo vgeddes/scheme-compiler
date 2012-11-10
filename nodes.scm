@@ -43,24 +43,26 @@
 (define-struct node     (id type value pred succ))
 (define-struct context  (formals start blocks))
 
-
-;; high-level structures 
+;; aggregate structures 
+(define-struct machine-module   (contexts))
 (define-struct machine-context  (name args start))
-
-
 (define-struct machine-block    (name head tail successors))
 
-;; instruction
-(define-struct machine-instr            (descriptor op1 op2 op3 next prev data))
-(define-struct machine-descriptor       (name format defs-get uses-get))
+;; instructions
+(define-struct machine-descriptor       (name format verifiers defs uses))
 
+(define-struct machine-instr            (descriptor ops next prev data))
+ 
 ;; operands 
-(define-struct machine-address  (base disp))
-(define-struct machine-temp     (name constrained data))
-(define-struct machine-constant (value))
-(define-struct machine-label    (value))
+
+(define-struct machine-addr-x86-64  (base disp))
+(define-struct machine-vreg         (name))
+(define-struct machine-imm          (size value))
 
 ;; data
 
-(define-struct machine-data     (label size)) 
+(define-struct machine-data     (name size)) 
+
+
+
 
