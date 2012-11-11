@@ -58,6 +58,7 @@
     convert-source
     alpha-convert
     cps-convert
+    reduce-administrative-redexes
     identify-primitives
     basic-lambda-lift
     closure-convert
@@ -78,7 +79,11 @@
      (fprintf port "Usage: scc FILE"))
     (else
       (let ((test-code (read-file (second argv))))
-         (machine-module-print (compile pipeline (car test-code)) (current-output-port))))))
+        (machine-module-print (compile pipeline (car test-code)) (current-output-port))
+
+       ;; (pretty-print (write-sexp (compile pipeline (car test-code))))
+        ;;(tree-module-print (compile pipeline (car test-code)) (current-output-port))
+       ))))
 
 (main (argv))
 

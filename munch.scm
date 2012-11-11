@@ -1,6 +1,6 @@
   
 (declare (unit munch)
-         (uses machine nodes))
+         (uses machine tree nodes))
 
 (use matchable)
 (use srfi-1)
@@ -8,12 +8,29 @@
 (include "munch-syntax")
 (include "patterns")
 
-(define (lower-call-conv-ret block value)
+(define (lower-return block value)
 
-  (machine-block-append-instr! block (mov64rr (vreg (tree-temp-name value)) (vreg 'rax)))
+    (cond
+      ((tree-constant? value)
+       (case (tree-constant-size value)
+         ((i8)
+          (machine-block-append-instr! block (xor64rr (vreg 'rax) (vreg 'rax)))
+          (machine-block-append-instr! block (mov64i8r (imm i8 (tree-constant-value value)) (vreg 'rax))))
+         ((i32)
+          (machine-block-append-instr! block (xor64rr (vreg 'rax) (vreg 'rax)))                
+          (machine-block-append-instr! block (mov64i32r (imm i32 (tree-constant-value value)) (vreg 'rax))))
+         ((i64)
+          (machine-block-append-instr! block (xor64rr (vreg 'rax) (vreg 'rax)))                
+          (machine-block-append-instr! block (mov64i64r (imm i64 (tree-constant-value value)) (vreg 'rax))))))
+      ((tree-temp? value)
+       (machine-block-append-instr! block (mov64rr (vreg (tree-temp-name value)) (vreg 'rax)))))
+
+  ;; stack frame management
+  (machine-block-append-instr! block (mov64rr (vreg 'rbp) (vreg 'rsp)))
+  (machine-block-append-instr! block (pop64r  (vreg 'rbp)))
   (machine-block-append-instr! block (retnear)))
 
-(define (lower-call-conv block target args)
+(define (lower-tail-call block target args)
   ;;
   ;; Lower to our calling convention for x86-64
   ;;
@@ -103,24 +120,35 @@
      (pop64r 'rdi)
      (pop64r 'rsi))))
 
+
+;;
+;; The __scheme_enter context needs the normal cdecl function prologue as it is the bridge function between C and the scheme program
+;;
+;;
+(define (construct-prologue block)
+
+ ;; prologue
+ (machine-block-append-instr! block (push64r (vreg 'rbp)))
+ (machine-block-append-instr! block (mov64rr (vreg 'rsp) (vreg 'rbp)))
+
+ ;; set heap_ptr
+ (machine-block-append-instr! block (mov64rm (vreg 'rsi) (addr (disp 'heap_ptr)))))
+
+
 (define (munch-statement block tree)
   (match tree
     (($ tree-instr 'return _ value)
-     (lower-call-conv-ret block value))
+     (lower-return block value))
     (($ tree-instr 'call _ target args)
-    ;; (lower-amd64-call-conv target args buf attrs))
      (case (tree-instr-attr tree 'callconv)
        ((tail)
-         (lower-call-conv block target args))
+         (lower-tail-call block target args))
        ((cdecl)
          '())
         ;;(lower-amd64-call-conv target args buf))
        (else (error 'munch-statement "should not reach here"))))
     (($ tree-instr 'assign _ (? symbol?) ($ tree-instr 'call) _ _ _ _ attrs)
     ;; (lower-amd64-call-conv target args buf attrs))
-    '())
-    (($ tree-instr 'return _ value _ _ _ _ _ _)
-    ;; (lower-return value buf))
     '())
     (_ (munch-tree block tree))))
 

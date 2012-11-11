@@ -568,7 +568,7 @@
        (tree-binop-format  x))
       ((call)
        (tree-call-format x))
-      ((ret)
+      ((return)
        (tree-ret-format x))
       ((br)
        (tree-br-format x))

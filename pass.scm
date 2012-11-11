@@ -222,6 +222,89 @@
               (make-variable tn) (make-nil))
             '()))))
 
+
+;;
+;; reduce the administrative reducible expressions produced by the CPS transform
+;;
+;; Example: ((lambda (x) ... x ...) v)
+;;                                      =>    ... x ...
+;;
+
+(define (reduce-administrative-redexes cexp)
+  (define (walk-cexp cexp)
+    (struct-case cexp
+      ((variable)
+       cexp)
+      ((constant)
+       cexp)
+      ((if test conseq altern)
+       (make-if
+          test
+          (walk-cexp conseq)
+          (walk-cexp altern)))
+      ((lambda name args body)
+       (make-lambda
+         name
+         args
+         (walk-cexp body)
+         '()))
+      ((comb args)
+       ;; reduce this comb if the first object is a lambda and none of the other objects are lambdas
+       (let ((first (car args)))
+         (cond
+           ((and (lambda? first) (fold (lambda (arg x) (if (lambda? arg) #f x)) #t (cdr args))) 
+            (substitute-vars (lambda-body first) (lambda-args first) (cdr args)))
+           (else cexp))))
+      ((prim name args result cexp)
+       (make-prim name 
+          args
+          result
+          (walk-cexp cexp)))
+      ((nil)
+        cexp)
+      (else (assert-not-reached))))
+
+ (walk-cexp cexp))
+
+(define (substitute-vars cexp names objects)
+  (let ((mappings (fold (lambda (name obj mappings)
+                          (cons (cons name obj) mappings))
+                        '() names objects)))
+
+  (define (walk-cexp cexp)
+    (struct-case cexp
+      ((variable name)
+       (cond 
+        ((assq name mappings)
+         => (lambda (pair) (cdr pair)))
+        (else cexp)))
+      ((constant)
+       cexp)
+      ((if test conseq altern)
+       (make-if (walk-cexp test) (walk-cexp conseq) (walk-cexp altern)))
+      ((lambda name args body free-vars)
+       (make-lambda
+         name
+         args
+         (substitute-vars body (lset-difference names args) objects)
+         '()))
+      ((comb args)
+       (make-comb (map (lambda (arg)
+                         (walk-cexp arg))
+                       args)))
+      ((prim name args result cexp)
+       (make-prim name 
+          (map (lambda (arg)
+                 (walk-cexp arg))
+               args)
+          result
+          (walk-cexp cexp)))
+      ((nil)
+        cexp)
+      (else (assert-not-reached))))
+
+  (walk-cexp cexp)))
+
 (define (identify-primitives cexp)
   (struct-case cexp
     ((variable)
@@ -297,26 +380,32 @@
        (make-app (rewrite name) (map rewrite args)))
       (else node)))
   (define (normalize node)
-    (if (lambda? node)
+    (cond
+      ((lambda? node)
         (let* ((name (lambda-name node))
                (args (lambda-args node))
                (body (lambda-body node))
                (defs (map normalize (collect body))))
           (if (null? defs)
               node
-              (make-lambda name args (make-fix defs (rewrite body)) '())))
+              (make-lambda name args (make-fix defs (rewrite body)) '()))))
+      (else
         (let* ((name (gensym 'f))
                (args (list))
                (body node)
                (defs (map normalize (collect body))))
           (if (null? defs)
               node
-              (make-lambda name args (make-fix defs (rewrite body)) '())))))
+              (make-lambda name args (make-fix defs (rewrite body)) '()))))))
   (let ((node (normalize node)))
-    (make-fix (list node)
-          (make-app
-            (make-variable (lambda-name node)) (list)))))
-
+    (cond
+      ((lambda? node)
+       (make-fix (list node)
+         (make-app
+           (make-variable (lambda-name node)) (list))))
+      (else
+        (make-fix (list)
+          node)))))
 
 (define (analyze-free-vars node)
   (let ((union (lambda lists
@@ -692,8 +781,7 @@
            ((return)
             (let* ((e1 (convert-atom (first args)))
                    (t0 (tree-build-return e1)))
-              (tree-block-add-statement! block t0)
-              '()))
+              (tree-block-add-statement! block t0)))
            (else (assert-not-reached)))))))
 
   (struct-case node
@@ -737,6 +825,11 @@
                                (walk-block succ))
                           (tree-block-succ block)))
            (machine-block (make-machine-block (tree-block-name block) '() '() successors)))
+
+      ;; if this the special __scheme_enter block, then add a prologue to make it a calleable C function
+      (if (eq? (machine-block-name machine-block) '__scheme_enter)
+        (construct-prologue machine-block))
+
       ;; munch each statement
       (tree-for-each-statement 
         (lambda (stm)

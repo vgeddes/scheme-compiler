@@ -251,6 +251,11 @@
    ((mov64mr (addr (base (vreg t1)) (disp c1))
              (vreg x))))
 
+  ((assign (temp x)
+     (load (mode i64) (temp t1)))
+   (temps) (out)
+   ((mov64mr (addr (base (vreg t1))))))
+
   ((assign (temp x) (load (mode i64) (label l1)))
    (temps) (out)
    ((mov64mr (addr (disp l1)) (vreg x))))
