@@ -1,6 +1,6 @@
 
 (declare (unit pass)
-         (uses nodes munch tree utils))
+         (uses nodes arch tree utils))
 
 (use matchable)
 (use srfi-1)
@@ -230,7 +230,7 @@
 ;;                                      =>    ... x ...
 ;;
 
-(define (reduce-administrative-redexes cexp)
+(define (beta-reduce cexp)
   (define (walk-cexp cexp)
     (struct-case cexp
       ((variable)
@@ -765,7 +765,7 @@
        (let* ((test (convert-atom test))
               (block1 (start-new-block conseq block))
               (block2 (start-new-block altern block))
-              (t0 (tree-build-cmp 'eq test (tree-constant-get 'i32 *false-value*)))
+              (t0 (tree-build-cmp 'eq test (tree-constant-get 'i64 *false-value*)))
               (t1 (tree-build-brc t0 block1 block2)))
          (tree-block-add-statement! block t1)
          '()))
@@ -811,38 +811,45 @@
       mod 
        ))))
 
-(define (select-instructions module)
-  (struct-case module
+(define (select-instructions mod)
+  (struct-case mod
     ((tree-module functions)
-     (make-machine-module
-        (map select-instructions-for-function functions)))
-    (else (error 'select-instructions))))
+     (let* ((mc-mod (mc-make-module))
+            (cxts   (map (lambda (fun)
+                            (select-instructions-for-function mc-mod fun))
+                       functions)))
+       mc-mod))
+    (else (assert-not-reached))))
 
-(define (select-instructions-for-function function)
+(define (select-instructions-for-function mc-mod fun)
 
-  (define (walk-block block)
-    (let* ((successors  (map (lambda (succ)
-                               (walk-block succ))
-                          (tree-block-succ block)))
-           (machine-block (make-machine-block (tree-block-name block) '() '() successors)))
+  (define (walk-block mc-cxt block)
+    (let ((mc-blk (mc-make-block mc-cxt (tree-block-name block))))
+       
+      (mc-block-succ-set! mc-blk
+        (map (lambda (succ)
+               (walk-block mc-cxt succ))
+          (tree-block-succ block)))      
 
       ;; if this the special __scheme_enter block, then add a prologue to make it a calleable C function
-      (if (eq? (machine-block-name machine-block) '__scheme_enter)
-        (construct-prologue machine-block))
+      (if (eq? (mc-block-name mc-blk) '__scheme_enter)
+        (gen-entry-prologue mc-blk))
 
       ;; munch each statement
       (tree-for-each-statement 
         (lambda (stm)
-          (munch-statement machine-block stm))
+          (munch-statement mc-blk stm))
         block)
-      machine-block))
+      mc-blk))
 
-  (struct-case function
+  (struct-case fun
     ((tree-function name args entry module)
-     (let ((args (map (lambda (tmp) 
-                        (make-machine-vreg (tree-temp-name tmp))) 
-                      args)))
-      (make-machine-context name args (walk-block entry))))
+     (let* ((args (map (lambda (tmp) 
+                        (tree-temp-name tmp)) 
+                      args))
+            (mc-cxt   (mc-make-context mc-mod name args)))
+       (mc-cxt-start-set! mc (walk-block mc-cxt entry))
+       mc-cxt))
     (else (assert-not-reached))))
 
 (define (immediate-rep x)

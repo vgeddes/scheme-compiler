@@ -1,129 +1,230 @@
 
-(declare (unit machine)
+(declare (unit mc)
          (uses nodes))
 
 (use matchable)
 (use srfi-1)
 
-(include "machine-syntax")
 (include "struct-syntax")
-(include "x86-64")
 
-;; formatting
+;; aggregate structures 
+(define-struct mc-module   (contexts))
+(define-struct mc-context  (name args start vregs))
+(define-struct mc-block    (name head tail succ cxt))
 
-(define (machine-module-print mod port)
-  (machine-context-for-each
+;; instructions
+(define-struct mc-spec       (name format verifiers uses defs))
+(define-struct mc-instr      (spec ops next prev block data))
+ 
+;; operands 
+
+(define-struct mc-vreg         (name users data))
+(define-struct mc-imm          (size value))
+(define-struct mc-disp         (size value))
+
+
+;; Constructors
+
+(define (mc-make-module)
+  (make-mc-module '()))
+
+(define (mc-make-context mod name)
+  (make-mc-context name '() '() '()))
+
+(define (mc-make-block cxt name)
+  (make-mc-block name '() '() '() cxt))
+
+(define (mc-make-instr blk spec operands)
+  (let ((instr (make-mc-instr spec operands '() '() blk '())))
+    (for-each (lambda (op)
+                (cond
+                   ((mc-vreg? op)
+                    (mc-vreg-add-user op instr))))
+              operands)
+    instr))
+
+
+
+;; Operand Protocol
+
+(define (mc-operand-equal? o1 o2)
+ (or (mc-vreg-equal? o1 o2)
+     (mc-imm-equal?  o1 o2)
+     (mc-disp-equal? o1 o2)))
+
+(define (mc-operand-format op)
+  (cond
+    ((mc-vreg? op)
+     (mc-vreg-format op))
+    ((mc-imm? op)
+     (mc-imm-format op))
+    ((mc-disp? op)
+     (mc-disp-format op))
+    (else (assert-not-reached))))
+
+;; Vreg Protocol
+
+(define (mc-vreg-equal? v1 v2)
+  (and (mc-vreg? v1) (mc-vreg? v2) (eq? v1 v2)))
+
+(define (mc-vreg-format v)
+  (arch-format-vreg v))
+
+(define (mc-vreg-add-user vreg instr)
+  (mc-vreg-users-set! vreg (cons instr (mc-vreg-users vreg))))
+
+(define (mc-vreg-remove-user vreg instr)
+  (mc-vreg-users-set! vreg
+     (lset-difference mc-vreg-equal? (mc-vreg-users vreg) (list instr))))
+
+;; Imm Protocol
+
+(define (mc-imm-equal? i1 i2)
+  (and (mc-imm? i1) (mc-imm? i2) (eq? i1 i2)))
+
+(define (mc-imm-format v)
+  (arch-imm-format v))
+
+;; Disp Protocol
+
+(define (mc-disp-equal? d1 d2)
+  (and (mc-disp? d1) (mc-disp? d2) (eq? d1 d2)))
+
+(define (mc-disp-format v)
+  (arch-disp-format v))
+
+;; Instruction Protocol
+
+;; Get all vregs that are read 
+(define (mc-instr-vregs-read instr)
+  (arch-vregs-read instr))
+
+;; Get all vregs that are written
+(define (mc-instr-vregs-written instr)
+  (arch-vregs-written instr))
+
+;; Replace a vreg
+(define (mc-instr-replace-vreg instr vreg x)
+  (define (replace ops)
+    (fold (lambda (op)
+            (cond
+               ((mc-operand-equal? op vreg)
+                (mc-vreg-remove-user op instr)
+                (mc-vreg-add-user x instr)
+                (cons x ops))
+               (else
+                (cons op ops))))
+          '()
+           ops))
+   (mc-instr-ops-set! instr (replace (mc-instr-ops instr))))
+
+;; Printing
+
+(define (mc-module-print mod port)
+  (mc-context-for-each
      (lambda (context)
-       (machine-context-print context port))
+       (mc-context-print context port))
      mod))
 
-(define (machine-context-print context port)
+(define (mc-context-print context port)
   (struct-case context
-    ((machine-context name args entry)
-     (fprintf port "# context name=~a args=~a\n" name (map (lambda (arg) (machine-operand-format arg)) args))
-     (machine-block-for-each
+    ((mc-context name args entry)
+     (mc-block-for-each
         (lambda (block)
-            (machine-block-print block port))
+            (mc-block-print block port))
         context))))
 
-(define (machine-block-print block port)
+(define (mc-block-print block port)
   (struct-case block
-    ((machine-block name head tail succ)
+    ((mc-block name head tail succ)
      ;; print label
      (fprintf port "~a:\n" name)
      ;; print code
-     (machine-instr-for-each
+     (mc-instr-for-each
         (lambda (instr)
-           (machine-instr-print instr port))
+           (mc-instr-print instr port))
          block)
      (fprintf port "\n"))))
 
-(define (machine-instr-print instr port)
+(define (mc-instr-print instr port)
   (fprintf port "  ")
   (fprintf port
     (apply format
            (cons
-            (machine-descriptor-format (machine-instr-descriptor instr))
-            (map machine-operand-format (machine-instr-ops instr)))))
+            (mc-descriptor-format (mc-instr-descriptor instr))
+            (map mc-operand-format (mc-instr-ops instr)))))
   (fprintf port "\n"))
 
-(define (machine-operand-format op)
-  (match op
-   ;; machine address
-   (($ machine-addr-x86-64 #f disp)
-     (format "~s(%rip)" disp))
 
-   (($ machine-addr-x86-64 ($ machine-vreg name) #f)
-     (format "(%~s)" name))
+;; Insertion
 
-   (($ machine-addr-x86-64 ($ machine-vreg name) disp)
-     (format "~s(%~s)" disp name))
-   
-   ;; machine constant
-   (($ machine-imm size value)
-    (format "~s" value))
 
-   ;; machine vreg
-   (($ machine-vreg name)
-    (format "%~s" name))
+(define (mc-block-append blk instr)
+  (cond
+    ((and (null? (mc-block-head blk))
+          (null? (mc-block-tail blk)))
+     (mc-block-head-set! blk instr)
+     (mc-block-tail-set! blk instr))
+    (else
+     (let ((tail (mc-block-tail blk)))
+       (mc-instr-prev-set! instr tail)
+       (mc-instr-next-set! tail instr)
+       (mc-block-tail-set! blk instr))))
+  block)
 
-   (_ (pretty-print op) (error "no matching pattern")))) 
+(define (mc-block-insert-after blk instr x)
+  (let ((next (mc-instr-next instr))
+        (prev (mc-instr-prev instr)))
+    (cond
+      ((and (null? next))
+       (mc-instr-prev-set! x     instr)
+       (mc-instr-next-set! x     '())
+       (mc-instr-next-set! instr x)
+       (mc-block-tail-set! blk   x))
+      (else
+       (mc-instr-prev-set! x     instr)
+       (mc-instr-next-set! x     next)
+       (mc-instr-next-set! instr x)
+       (mc-instr-prev-set! next  x)))))
+
+(define (mc-block-insert-before blk instr x)
+  (let ((next (mc-instr-next instr))
+        (prev (mc-instr-prev instr)))
+    (cond
+      ((and (null? prev))
+       (mc-instr-next-set! x     instr)
+       (mc-instr-prev-set! x     '())
+       (mc-instr-prev-set! instr x)
+       (mc-block-head-set! blk   x))
+      (else
+       (mc-instr-prev-set! x     prev)
+       (mc-instr-next-set! x     instr)
+       (mc-instr-prev-set! instr x)
+       (mc-instr-next-set! prev  x)))))
 
 
 ;; iteration
 
-(define (machine-context-for-each f mod)
-  (for-each f (machine-module-contexts mod)))
+(define (mc-context-for-each f mod)
+  (for-each f (mc-module-contexts mod)))
 
 
-(define (machine-block-for-each f context)
+(define (mc-block-for-each f context)
   (define (visit-block block f)
-    (let ((succ (machine-block-successors block)))
+    (let ((succ (mc-block-successors block)))
       (f block)
       (for-each (lambda (succ)
                   (visit-block succ f))
                 succ)))
-    (visit-block (machine-context-start context) f))
+    (visit-block (mc-context-start context) f))
 
 
-(define (machine-instr-for-each f block)
-  (let ((head (machine-block-head block)))
+(define (mc-instr-for-each f block)
+  (let ((head (mc-block-head block)))
     (let walk ((x head))
       (cond
        ((not (null? x))
         (f x)
-        (walk (machine-instr-next x)))))))
-
-
-
-(define (machine-block-append-instr! block instr)
-  (cond
-    ((and (null? (machine-block-head block))
-          (null? (machine-block-tail block)))
-     (machine-block-head-set! block instr)
-     (machine-block-tail-set! block instr))
-    (else
-     (let ((tail (machine-block-tail block)))
-       (machine-instr-prev-set! instr tail)
-       (machine-instr-next-set! tail instr)
-       (machine-block-tail-set! block instr))))
-  block)
-
-;; utils
-(define (machine-block-append instr*)
-  (cond
-    ((null? instr) '())
-    ((= (length instr*) 1)
-     (car instr*))
-    (else
-     (let f ((prev (first instr*))
-             (next (second instr*)) 
-             (rest (cddr instr*))) 
-        (machine-instr-set-next! prev next)
-        (machine-instr-set-prev! next prev)
-        (if (null? rest)
-            (car instr*) 
-            (f next (car rest) (cdr rest))))))) 
-
+        (walk (mc-instr-next x)))))))
 
 

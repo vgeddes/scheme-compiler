@@ -58,13 +58,14 @@
     convert-source
     alpha-convert
     cps-convert
-    reduce-administrative-redexes
+    beta-reduce
     identify-primitives
     basic-lambda-lift
     closure-convert
     flatten
     tree-convert
-    select-instructions))
+    select-instructions
+    analyze-liveness-pass))
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))
@@ -76,10 +77,10 @@
 (define (main argv)
   (cond
     ((= (length argv) 1)
-     (fprintf port "Usage: scc FILE"))
+     (fprintf (current-output-port) "Usage: scc FILE\n"))
     (else
       (let ((test-code (read-file (second argv))))
-        (machine-module-print (compile pipeline (car test-code)) (current-output-port))
+        (mc-module-print (compile pipeline (car test-code)) (current-output-port))
 
        ;; (pretty-print (write-sexp (compile pipeline (car test-code))))
         ;;(tree-module-print (compile pipeline (car test-code)) (current-output-port))

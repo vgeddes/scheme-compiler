@@ -18,7 +18,7 @@
 (define-struct prim     (name args result cexp))
 (define-struct nil      ())
 
-;; LLIL: A machine executable language
+;; LLIL: A mc executable language
 
 ;;; this language borrows <constant>, <variable> , and <if> from HLIL, for they have the same semantics at this level. 
 
@@ -43,26 +43,12 @@
 (define-struct node     (id type value pred succ))
 (define-struct context  (formals start blocks))
 
-;; aggregate structures 
-(define-struct machine-module   (contexts))
-(define-struct machine-context  (name args start))
-(define-struct machine-block    (name head tail successors))
 
-;; instructions
-(define-struct machine-descriptor       (name format verifiers defs uses))
-
-(define-struct machine-instr            (descriptor ops next prev data))
- 
-;; operands 
-
-(define-struct machine-addr-x86-64  (base disp))
-(define-struct machine-vreg         (name))
-(define-struct machine-imm          (size value))
-
-;; data
-
-(define-struct machine-data     (name size)) 
-
-
+(define-struct arch-descriptor
+        (operand-format
+         vregs-read
+         vregs-written
+         generate-bridge-context
+         emit-statement))
 
 

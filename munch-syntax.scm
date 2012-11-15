@@ -4,34 +4,6 @@
 
 ;; convenience constructors (used in pattern match rules)
 
-(define-syntax addr
-  (lambda (e r c)
-    (match e
-      (('addr ('base x) ('disp y))
-       `(make-machine-addr-x86-64 ,x ,y))
-      (('addr ('base x))
-       `(make-machine-addr-x86-64 ,x #f))
-      (('addr ('disp y))
-       `(make-machine-addr-x86-64 #f ,y)))))
-
-(define-syntax imm
-  (lambda (e r c)
-    (match e
-      (('imm size value)
-       `(make-machine-imm ',size ,value)))))
-
-
-(define-syntax vreg
- (lambda (e r c)
-    (match e
-      (('vreg name)
-       `(make-machine-vreg ,name)))))
-
-(define-syntax buf-append
-  (syntax-rules ()
-   ((append-to-buf buf (production ...))
-    (box-set! buf (append (box-ref buf) (list production ...))))))
-
 (define-syntax define-munch-rules
   (lambda (e r c)
     (let ((%let*       (r 'let*))
@@ -45,8 +17,9 @@
           (%block      (r 'block))
           (%tree       (r 'tree))
           (%t1         (gensym))
-          (%machine-block-append-instr! (r 'machine-block-append-instr!))
-          (%make-machine-vreg           (r 'make-machine-vreg)))
+          (%mc-block-append           (r 'mc-block-append ))
+          (%mc-context-allocate-vreg  (r 'mc-context-allocate-vreg))
+          (%mc-block-cxt              (r 'mc-block-cxt)))
  
 
     (define renamed '())
@@ -80,7 +53,7 @@
     ;; Transform high-level patterns into low-level 'match patterns
     ;; 
     ;;  (add (i32 x) op2)
-    ;;  => ($ selection-node 'add (? i32? x) (? symbol? g67))
+    ;;  => ($ tree-instr 'add ('mode 'i32) (? i32? x) (? symbol? g67))
     ;;  
     (define (compile-pattern pat)
       (define (walk pat)
@@ -139,16 +112,17 @@
         ;; mode
         (('mode x) x)
 
-        ;; (_ (print pat))
+         ;;(_ (print pat))
 
         ))
     (walk pat))
  
-    (define (generate-bindings bindings)
-      (match bindings
-        (() '())
-        ((expr . rest)
-         (cons `(,expr (munch-tree ,%block ,(rename expr))) (generate-bindings rest)))))
+    (define (gen-bindings arch bindings)
+      (let ((function-name  (string->symbol (format "munch-~s" arch))))
+        (match bindings
+          (() '())
+          ((expr . rest)
+           (cons `(,expr (,function-name ,%block ,(rename expr))) (gen-bindings arch rest))))))
 
     (define (parse-temp-cls out)
       (match out
@@ -161,63 +135,57 @@
         (('out)  #f)
         (else (assert-not-reached))))
 
-    (define (generate pat temps out tmpl*)
+    (define (gen-code arch pat temps out tmpl*)
       (let* ((nodes-to-expand (select-names    pat))
              (pat-compiled    (compile-pattern pat))
              (bindings
               (append
                ;; Bind names to expanded nodes
-                (generate-bindings nodes-to-expand)
+                (gen-bindings arch nodes-to-expand)
                 (cond
                   ;; bind the name 'out' to a gensym if this production requires a return value (in which case out != #f)
                   ;; AND the user-specified return value is not already listed in nodes-to-expand. 
                   ((and out (not (memq out nodes-to-expand)))
-                   `((,out (,%make-machine-vreg (,%gensym 't)))))
+                   `((,out (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) (,%gensym 't)))))
                   (else '()))
                ;; bind temps to unique symbols (remembering not to bind 'out again if it is declared as a temp)
                (map (lambda (temp)
-                      `(,temp (,%make-machine-vreg (,%gensym 't))))
-                    (lset-difference eq? temps (list out)))))
-             (productions (map (lambda (tmpl) 
-                                 `(,%machine-block-append-instr! ,%block ,tmpl))
-                               tmpl*)))
+                      `(,temp (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) (,%gensym 't))))
+                    (lset-difference eq? temps (list out))))))
+
         `(,pat-compiled
           (,%let* ,bindings
-            ,@productions
+            `(arch-emit-code ,arch ,%block ,@tmpl*)
             ,out))))
 
-    (define (compile rule)
+    (define (compile arch rule)
       (match rule
         ((pat temp-cls out-cls (tmpl* ...)) 
-         (generate
+         (gen-code
+            arch
             pat
             (parse-temp-cls temp-cls)  
             (parse-out-cls  out-cls)
             tmpl*))))
     
-    (define (compile-rules rule*)
+    (define (compile-rules arch rule*)
       (reverse
         (fold (lambda (rule x)
-                (cons (compile rule) x))
+                (cons (compile arch rule) x))
               '()
               rule*)))
 
     (match e
-      (('define-munch-rules rule* ...)
-       (let* ((rule-compiled* (compile-rules rule*)))
+      (('define-munch-rules arch rule* ...)
+       (let* ((rule-compiled* (compile-rules arch rule*))
+              (function-name  (string->symbol (format "munch-~s" arch))))
 
- ;;         (pretty-print
-  ;;`(,%define (munch-tree ,%block ,%tree)
-  ;;           (,%match ,%tree
-  ;;              (($ tree-temp ,%t1)
-  ;;               (,%make-machine-vreg ,%t1))
-  ;;             ,@rule-compiled*)
-  ;;            %block))
+          
 
-         `(,%define (munch-tree ,%block ,%tree)
+         `(,%define (,function-name ,%block ,%tree)
              (,%match ,%tree
                (($ tree-temp ,%t1)
-                (,%make-machine-vreg ,%t1))
+                (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) ,%t1))
                ,@rule-compiled*
               (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern"))))))))))
 

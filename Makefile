@@ -2,25 +2,25 @@
 PACKAGE := scc
 VERSION := 0.1
 
-objects := nodes.o pass.o main.o machine.o liveness.o munch.o utils.o tree.o
+objects := nodes.o pass.o main.o machine.o liveness.o utils.o tree.o arch.o
+
+objects_x86_64 = arch/x86-64/arch-x86-64.o
 
 tests_bin = tests/test-fast-match
 
 all: scc tests
 
-scc: $(objects)
+scc: $(objects) $(objects_x86_64)
 	csc -o $@ $^
 
 # extra dependencies
 
-nodes.o: struct-syntax.scm
-main.o:  struct-syntax.scm
-pass.o:  struct-syntax.scm
-machine.o:  x86-64.scm machine-syntax.scm
-tree.o:   struct-syntax.scm
-option-parser.o: struct-syntax.
-
-munch.o: patterns.scm munch-syntax.scm nodes.scm
+nodes.o:   struct-syntax.scm
+main.o:    struct-syntax.scm
+pass.o:    struct-syntax.scm
+tree.o:    struct-syntax.scm
+arch/x86-64/arch-x86-64.o: arch/x86-64/rules.scm arch/x86-64/spec.scm arch-syntax.scm munch-syntax.scm
+arch.o:    nodes.scm
 
 # default rule
 
@@ -36,7 +36,7 @@ asm-test: asm-test.o asm-test.c
 	gcc -o asm-test -o $@ $^
 
 asm-test.o: asm-test.nasm
-	nasm -f elf64 -g -o $@ $^ 
+	nasm -f elf64 -g -o $@ $^
 
 dist: tarball
 
