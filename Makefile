@@ -4,7 +4,7 @@ VERSION := 0.1
 
 objects := nodes.o pass.o main.o machine.o liveness.o utils.o tree.o arch.o
 
-objects_x86_64 = arch/x86-64/arch-x86-64.o
+objects_x86_64 = arch/x86-64/arch-x86-64.o arch/x86-64/spec-x86-64.o arch/x86-64/rules-x86-64.o
 
 tests_bin = tests/test-fast-match
 
@@ -19,7 +19,9 @@ nodes.o:   struct-syntax.scm
 main.o:    struct-syntax.scm
 pass.o:    struct-syntax.scm
 tree.o:    struct-syntax.scm
-arch/x86-64/arch-x86-64.o: arch/x86-64/rules.scm arch/x86-64/spec.scm arch-syntax.scm munch-syntax.scm
+arch/x86-64/arch-x86-64.o: arch-syntax.scm
+arch/x86-64/spec-x86-64.o: arch-syntax.scm
+arch/x86-64/rules-x86-64.o: arch-syntax.scm munch-syntax.scm
 arch.o:    nodes.scm
 
 # default rule
@@ -55,4 +57,4 @@ tags:
 .PHONY : clean
 clean:
 	rm -rf $(PACKAGE)-$(VERSION) $(PACKAGE)-$(VERSION).tar.gz
-	rm -rf *.o scc asm-test
+	rm -rf $(objects) $(objects_x86_64) scc

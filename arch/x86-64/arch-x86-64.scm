@@ -1,14 +1,11 @@
   
 (declare (unit arch-x86-64)
-         (uses arch tree nodes))
+         (uses spec-x86-64 rules-x86-64 tree nodes))
 
 (use matchable)
 (use srfi-1)
 
 (include "arch-syntax")
-(include "munch-syntax")  
-(include "arch/x86-64/spec")
-(include "arch/x86-64/rules")
 
 (define (operand-format-x86-64 op)
   (cond

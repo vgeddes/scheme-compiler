@@ -6,23 +6,22 @@ Current design
 ==============
 
 * CPS high-level IR [DONE]
-  Raw scheme source code undergoes macro-expansion, alpha-conversion, 
-  CPS conversion, lambda lifting, closure conversion, and then 
+  Raw scheme source code undergoes macro expansion, alpha conversion, 
+  CPS conversion, beta reduction, lambda lifting, closure conversion, and finally,
   conversion to the Tree IR.
 * Tree-based low-level IR [DONE]
-  Currently only used as a convenient source IR for instruction selection
+  Used as a convenient source IR for instruction selection. 
 * x86-64 code generator [DONE]
-  Uses a near-optimal maximal munch algorithm
-* linear-scan register allocator [TODO]
+  Uses a near-optimal maximal munch algorithm, and a set of selection rules. 
+* Graph-colouring register allocator [TODO]
 * Assembler [TODO]
-* High-level optimizations (elimination of CPS artifacts, etc)
 
 Written in Scheme!
 
 Supported Language
 ==================
 
-Primitives: begin, let, and, or, not, if, lambda
+Primitives: lambda, let, begin, if, and, or, not, fx+, fx-, fx=, fx<=, fx>=, fx<, fx>
 Data: closures, fixnums
 
 Build

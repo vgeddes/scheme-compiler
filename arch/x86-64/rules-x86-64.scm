@@ -1,3 +1,8 @@
+(declare (unit rules-x86-64)
+         (uses tree))
+
+(include "munch-syntax")
+(include "arch-syntax")
 
 (define-munch-rules x86-64
   

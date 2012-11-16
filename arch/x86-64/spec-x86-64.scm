@@ -1,4 +1,7 @@
+(declare (unit spec-x86-64)
+         (uses nodes))
 
+(include "arch-syntax")
 
 ;; Instruction Definitions
 
