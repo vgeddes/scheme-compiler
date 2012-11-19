@@ -717,13 +717,13 @@
            (tree-block-add-statement! block
              (cond
                ((tree-constant? v)
-                (tree-build-store 'i64 v (tree-build-add 'i32 base (tree-constant-get 'i32 i))))              
+                (tree-build-store 'i64 v (tree-build-add 'i32 base (tree-constant-get 'i32 (* 8 i)))))              
                ((tree-temp? v)
                 (tree-build-store 'i64
-                  v (tree-build-add 'i32 base (tree-constant-get 'i32 i))))
+                  v (tree-build-add 'i32 base (tree-constant-get 'i32 (* 8 i)))))
                ((tree-label? v)        
                 (tree-build-store 'i64
-                  (tree-build-load 'ptr64 v) (tree-build-add 'i32 base (tree-constant-get 'i32 i))))
+                  (tree-build-load 'ptr64 v) (tree-build-add 'i32 base (tree-constant-get 'i32 (* 8 i)))))
                (else (assert-not-reached))))
 
              (f v* (+ i 1))))))
@@ -802,7 +802,7 @@
   (struct-case node
     ((fix defs body)
      (let* ((mod  (tree-make-module))
-            (defs (cons (make-lambda '__scheme_enter '() body '()) defs)))
+            (defs (cons (make-lambda 'begin '() body '()) defs)))
        
        ;; convert the definitions into function bodies
        (for-each (lambda (def)
@@ -816,39 +816,32 @@
     ((tree-module functions)
      (let* ((mc-mod (mc-make-module))
             (cxts   (map (lambda (fun)
-                            (select-instructions-for-function mc-mod fun))
+                            (select-function mc-mod fun))
                        functions)))
+       (arch-generate-bridge-context mc-mod)
        mc-mod))
     (else (assert-not-reached))))
 
-(define (select-instructions-for-function mc-mod fun)
+(define (select-function mc-mod fun)
+  (define (walk-block block mcxt mblk)
+    (let ((succ (map (lambda (succ)
+                       (walk-block
+                         succ
+                         mcxt
+                         (mc-make-block mcxt (tree-block-name succ))))
+                     (tree-block-succ block))))
 
-  (define (walk-block mc-cxt block)
-    (let ((mc-blk (mc-make-block mc-cxt (tree-block-name block))))
-       
-      (mc-block-succ-set! mc-blk
-        (map (lambda (succ)
-               (walk-block mc-cxt succ))
-          (tree-block-succ block)))      
+      (mc-block-succ-set! mblk succ)
 
-      ;; if this the special __scheme_enter block, then add a prologue to make it a calleable C function
-      (if (eq? (mc-block-name mc-blk) '__scheme_enter)
-        (gen-entry-prologue mc-blk))
-
-      ;; munch each statement
-      (tree-for-each-statement 
-        (lambda (stm)
-          (munch-statement mc-blk stm))
-        block)
-      mc-blk))
+      (tree-for-each-statement (lambda (stm)
+                                 (arch-emit-statement mblk stm))
+                               block)
+      mblk))
 
   (struct-case fun
-    ((tree-function name args entry module)
-     (let* ((args (map (lambda (tmp) 
-                        (tree-temp-name tmp)) 
-                      args))
-            (mc-cxt   (mc-make-context mc-mod name args)))
-       (mc-cxt-start-set! mc (walk-block mc-cxt entry))
+    ((tree-function name params entry module)
+     (let* ((mc-cxt (mc-make-context name (map (lambda (p) (tree-temp-name p)) params) mc-mod)))
+       (walk-block entry mc-cxt (mc-context-start mc-cxt))
        mc-cxt))
     (else (assert-not-reached))))
 

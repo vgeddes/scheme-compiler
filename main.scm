@@ -64,8 +64,9 @@
     closure-convert
     flatten
     tree-convert
-    select-instructions
-    analyze-liveness-pass))
+    select-instructions))
+;;    allocate-registers))
+ ;;   allocate-registers
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))

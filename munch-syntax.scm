@@ -16,8 +16,8 @@
           (%gensym     (r 'gensym))
           (%block      (r 'block))
           (%tree       (r 'tree))
-          (%t1         (gensym))
-          (%mc-block-append           (r 'mc-block-append ))
+          (%t1         (gensym 't))
+          (%mc-block-append           (r 'mc-block-append))
           (%mc-context-allocate-vreg  (r 'mc-context-allocate-vreg))
           (%mc-block-cxt              (r 'mc-block-cxt)))
  
@@ -101,7 +101,7 @@
 
         ;; atoms
         (('const size x)
-           `($ tree-constant ',size ,x))
+         `($ tree-constant ',size ,x))
         (('label x)
          `($ tree-label ,x))
         (('temp x)
@@ -155,7 +155,7 @@
 
         `(,pat-compiled
           (,%let* ,bindings
-            `(arch-emit-code ,arch ,%block ,@tmpl*)
+            (arch-emit-code ,arch ,%block ,@tmpl*)
             ,out))))
 
     (define (compile arch rule)
@@ -180,7 +180,13 @@
        (let* ((rule-compiled* (compile-rules arch rule*))
               (function-name  (string->symbol (format "munch-~s" arch))))
 
-          
+;;         (pretty-print
+;;  `(,%define (,function-name ,%block ,%tree)
+;;             (,%match ,%tree
+;;               (($ tree-temp ,%t1)
+;;                (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) ,%t1))
+;;               ,@rule-compiled*
+;;              (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern")))))
 
          `(,%define (,function-name ,%block ,%tree)
              (,%match ,%tree

@@ -40,12 +40,12 @@
 
 (define-struct module  (contexts))
 
-(define-struct node     (id type value pred succ))
 (define-struct context  (formals start blocks))
 
 
 (define-struct arch-descriptor
-        (operand-format
+        (make-context
+         operand-format
          vregs-read
          vregs-written
          generate-bridge-context

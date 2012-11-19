@@ -1,5 +1,5 @@
 
-(declare (unit mc)
+(declare (unit machine)
          (uses nodes))
 
 (use matchable)
@@ -13,37 +13,46 @@
 (define-struct mc-block    (name head tail succ cxt))
 
 ;; instructions
-(define-struct mc-spec       (name format verifiers uses defs))
-(define-struct mc-instr      (spec ops next prev block data))
+(define-struct mc-spec       (name fmt fmt-indices verifiers reads writes))
+(define-struct mc-instr      (spec ops next prev implicit-uses sp-load sp-store number block data))
  
 ;; operands 
 
-(define-struct mc-vreg         (name users data))
-(define-struct mc-imm          (size value))
-(define-struct mc-disp         (size value))
+(define-struct mc-vreg         (name hreg users data))
 
+(define-struct mc-imm          (size value))
+(define-struct mc-disp         (value))
 
 ;; Constructors
 
 (define (mc-make-module)
   (make-mc-module '()))
 
-(define (mc-make-context mod name)
-  (make-mc-context name '() '() '()))
+(define (mc-make-context name params mod)
+  (arch-make-context name params mod))
 
 (define (mc-make-block cxt name)
   (make-mc-block name '() '() '() cxt))
 
-(define (mc-make-instr blk spec operands)
-  (let ((instr (make-mc-instr spec operands '() '() blk '())))
+(define (mc-make-instr blk spec implicit-uses operands)
+  (let ((instr (make-mc-instr spec operands '() '() implicit-uses '() '()  #f blk '())))
     (for-each (lambda (op)
                 (cond
                    ((mc-vreg? op)
                     (mc-vreg-add-user op instr))))
               operands)
+    (and blk (mc-block-append blk instr))
     instr))
 
-
+(define mc-make-vreg
+  (lambda operands
+    (match operands
+       ((name)
+        (make-mc-vreg name #f'() '()))
+       ((name hreg-constraint)
+        (make-mc-vreg name #f '() '()))
+       (else (assert-not-reached)))))
+          
 
 ;; Operand Protocol
 
@@ -53,22 +62,12 @@
      (mc-disp-equal? o1 o2)))
 
 (define (mc-operand-format op)
-  (cond
-    ((mc-vreg? op)
-     (mc-vreg-format op))
-    ((mc-imm? op)
-     (mc-imm-format op))
-    ((mc-disp? op)
-     (mc-disp-format op))
-    (else (assert-not-reached))))
+  (arch-operand-format op))
 
 ;; Vreg Protocol
 
 (define (mc-vreg-equal? v1 v2)
   (and (mc-vreg? v1) (mc-vreg? v2) (eq? v1 v2)))
-
-(define (mc-vreg-format v)
-  (arch-format-vreg v))
 
 (define (mc-vreg-add-user vreg instr)
   (mc-vreg-users-set! vreg (cons instr (mc-vreg-users vreg))))
@@ -77,21 +76,18 @@
   (mc-vreg-users-set! vreg
      (lset-difference mc-vreg-equal? (mc-vreg-users vreg) (list instr))))
 
+(define (mc-vreg-param? v)
+  (mc-vreg-attribs v))
+
 ;; Imm Protocol
 
 (define (mc-imm-equal? i1 i2)
   (and (mc-imm? i1) (mc-imm? i2) (eq? i1 i2)))
 
-(define (mc-imm-format v)
-  (arch-imm-format v))
-
 ;; Disp Protocol
 
 (define (mc-disp-equal? d1 d2)
   (and (mc-disp? d1) (mc-disp? d2) (eq? d1 d2)))
-
-(define (mc-disp-format v)
-  (arch-disp-format v))
 
 ;; Instruction Protocol
 
@@ -103,10 +99,23 @@
 (define (mc-instr-vregs-written instr)
   (arch-vregs-written instr))
 
+(define (mc-instr-is-read? instr vreg)
+  (and (find (lambda (x)
+               (mc-vreg-equal? x vreg))
+             (mc-instr-vregs-read instr))
+       #t))
+
+(define (mc-instr-is-written? instr vreg)
+  (and (find (lambda (x)
+               (mc-vreg-equal? x vreg))
+             (mc-instr-vregs-written instr))
+       #t))
+
 ;; Replace a vreg
 (define (mc-instr-replace-vreg instr vreg x)
   (define (replace ops)
-    (fold (lambda (op)
+    (reverse
+    (fold (lambda (op ops)
             (cond
                ((mc-operand-equal? op vreg)
                 (mc-vreg-remove-user op instr)
@@ -115,12 +124,33 @@
                (else
                 (cons op ops))))
           '()
-           ops))
+           ops)))
    (mc-instr-ops-set! instr (replace (mc-instr-ops instr))))
+
+;; Context Protocol
+
+(define mc-context-allocate-vreg
+  (lambda operands
+    (match operands
+      ((cxt name rest* ...)
+       (let ((vregs (mc-context-vregs cxt)))
+         (cond
+           ((find (lambda (vreg)
+                    (eq? (mc-vreg-name vreg) name))
+                  vregs)
+               => (lambda (vreg) vreg))
+           (else
+             (let ((vreg (if (null? rest*) (mc-make-vreg name) (mc-make-vreg name (car rest*)))))
+               (mc-context-vregs-set! cxt (cons vreg vregs))
+               vreg)))))
+       (else (assert-not-reached)))))
 
 ;; Printing
 
 (define (mc-module-print mod port)
+
+  (fprintf port "section  .text\n\n")
+  (fprintf port "  global __scheme_exec\n\n")
   (mc-context-for-each
      (lambda (context)
        (mc-context-print context port))
@@ -129,6 +159,9 @@
 (define (mc-context-print context port)
   (struct-case context
     ((mc-context name args entry)
+
+     (fprintf port "  # context: name=~s args=~s\n" name (map (lambda (arg) (mc-vreg-name arg)) args))
+     
      (mc-block-for-each
         (lambda (block)
             (mc-block-print block port))
@@ -138,7 +171,7 @@
   (struct-case block
     ((mc-block name head tail succ)
      ;; print label
-     (fprintf port "~a:\n" name)
+     (fprintf port "  ~a:\n" name)
      ;; print code
      (mc-instr-for-each
         (lambda (instr)
@@ -147,16 +180,21 @@
      (fprintf port "\n"))))
 
 (define (mc-instr-print instr port)
-  (fprintf port "  ")
+  (let* ((fmt         (mc-spec-fmt (mc-instr-spec instr)))
+         (fmt-indices (mc-spec-fmt-indices (mc-instr-spec instr)))
+         (ops-vect    (list->vector (mc-instr-ops instr)))
+         (ops-sorted  (reverse (fold (lambda (i x)
+                                      (cons (vector-ref ops-vect (- i 1)) x))
+                                    '()
+                                    fmt-indices))))
+;;  (fprintf port "                                     # live = ~s\n" (map (lambda (vreg) (mc-vreg-name vreg)) (mc-instr-data instr)))
+  (fprintf port "    ")
   (fprintf port
     (apply format
            (cons
-            (mc-descriptor-format (mc-instr-descriptor instr))
-            (map mc-operand-format (mc-instr-ops instr)))))
-  (fprintf port "\n"))
-
-
-;; Insertion
+             fmt
+             (map mc-operand-format ops-sorted))))
+  (fprintf port "\n")))
 
 
 (define (mc-block-append blk instr)
@@ -170,7 +208,7 @@
        (mc-instr-prev-set! instr tail)
        (mc-instr-next-set! tail instr)
        (mc-block-tail-set! blk instr))))
-  block)
+  blk)
 
 (define (mc-block-insert-after blk instr x)
   (let ((next (mc-instr-next instr))
@@ -211,7 +249,7 @@
 
 (define (mc-block-for-each f context)
   (define (visit-block block f)
-    (let ((succ (mc-block-successors block)))
+    (let ((succ (mc-block-succ block)))
       (f block)
       (for-each (lambda (succ)
                   (visit-block succ f))

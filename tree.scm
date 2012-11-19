@@ -202,7 +202,7 @@
   (let ((node
          (tree-make-instr
           (op    'cmp)
-          (mode  'i32)
+          (mode  'i64)
           (in1    test)
           (in2    x)
           (in3    y))))

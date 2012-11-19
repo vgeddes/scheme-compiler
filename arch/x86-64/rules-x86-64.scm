@@ -1,8 +1,10 @@
 (declare (unit rules-x86-64)
-         (uses tree))
+         (uses tree machine))
 
 (include "munch-syntax")
 (include "arch-syntax")
+
+(use matchable)
 
 (define-munch-rules x86-64
   
@@ -10,20 +12,20 @@
   
   ((br (label x))
    (temps) (out)
-   ((jmp64.d (disp x))))
+   ((jmp.d (disp x))))
 
   ;; branch indirect
 
   ((br (temp x))
    (temps) (out)
-   ((jmp64.r (vreg x))))
+   ((jmp.r (vreg x))))
 
   ;; branch if true
   
   ((brc op1 (label tl) (label fl))
    (temps) (out)
    ((cmp.i8r (imm i8 0) op1)
-    (jne.d   disp tl)))
+    (jne.d   (disp tl))))
 
   ;; branch if >
   
@@ -76,7 +78,7 @@
 
   ((cmp (mode i64) (op le) op1 op2)
    (temps t1) (out t1)
-   ((xor.rr  t1  t1)
+   ((mov.i64r (imm i64 0) t1)
     (cmp.rr  op1 op2)
     (setle.r t1)))
 
@@ -84,7 +86,7 @@
 
   ((cmp (mode i64) (op lt) op1 op2)
    (temps t1) (out t1)
-   ((xor.rr  t1 t1)
+   ((mov.i64r (imm i64 0) t1)
     (cmp.rr  op1 op2)
     (setl.r  t1)))
   
@@ -92,7 +94,7 @@
 
   ((cmp (mode i64) (op eq) op1 op2)
    (temps t1) (out t1)
-   ((xor.rr  t1 t1)
+   ((mov.i64r (imm i64 0) t1)
     (cmp.rr  op1 op2)
     (sete.r  t1)))
   
@@ -100,7 +102,7 @@
 
   ((cmp (mode i64) (op gt) op1 op2)
    (temps t1) (out t1)
-   ((xor.rr  t1 t1)
+   ((mov.i64r (imm i64 0) t1)
     (cmp.rr  op1 op2)
     (setg.r  t1)))
 
@@ -108,7 +110,7 @@
 
   ((cmp (mode i64) (op ge) op1 op2)
    (temps t1) (out t1)
-   ((xor.rr  t1 t1)
+   ((mov.i64r (imm i64 0) t1)
     (cmp.rr  op1 op2)
     (setge.r t1)))
   
@@ -116,27 +118,27 @@
 
   ((load (mode ptr64) (label l1))
    (temps t1) (out t1)
-   ((lea.mr (disp l1) t1)))
+   ((lea.dr (disp l1) t1)))
 
   ((assign (temp x) (load (mode ptr64) (label l1)))
    (temps) (out)
-   ((lea.mr (disp l1) (vreg x))))
+   ((lea.dr (disp l1) (vreg x))))
   
   ;; load immediate
   
   ((const i8 x)
    (temps t1) (out t1)
-   ((xor.rr  t1 t1)
-    (mov64i8r (imm i8 x) t1)))
+   ((mov.i64r (imm i64 0) t1)
+    (mov.i8r (imm i8 x) t1)))
   
   ((const i32 x)
    (temps t1) (out t1)
-   ((xor.rr   t1 t1)
-    (mov64i32r (imm i32 x) t1)))
+   ((mov.i64r (imm i64 0) t1)
+    (mov.i32r (imm i32 x) t1)))
 
   ((const i64 x)
    (temps t1) (out t1)
-   ((mov64i64r (imm i64 x) t1)))
+   ((mov.i64r (imm i64 x) t1)))
 
   
   ;; memory load
@@ -163,18 +165,17 @@
                                 (temp t1)
                                 (const i32 c1)))
    (temps) (out)
-   ((mov64rm (vreg x) 
-             (addr (base (vreg t1)) (disp c1)))))
+   ((mov.rmd (vreg x) (vreg t1) (disp c1))))
 
   ((store (mode i64) op1 (add (mode i32)
                                  (temp t1)
                                  (const i32 c1)))
    (temps) (out)
-   ((mov64rm op1 (addr (base (vreg t1)) (disp c1)))))
+   ((mov.rmd op1 (vreg t1) (disp c1))))
 
   ((store (mode i64) op1 (label l1))
    (temps) (out)
-   ((mov64rm op1 (addr (disp l1)))))
+   ((mov.rd op1 (disp l1))))
 
   ;; assign
   
@@ -268,17 +269,17 @@
   ((ior (mode i64) op1 (const i8 x))
    (temps t5) (out t5) 
    ((mov.rr op1 t5)
-    (or.i8r (imm i8 x) t5)))
+    (ior.i8r (imm i8 x) t5)))
   
   ((ior (mode i64) (const i8 x) op2)
    (temps t5) (out t5) 
    ((mov.rr op2 t5)
-    (or.i8r (imm i8 x) t5)))
+    (ior.i8r (imm i8 x) t5)))
 
   ((ior (mode i64) op1 (const i32 x))
    (temps t5) (out t5) 
    ((mov.rr op1 t5)
-    (or.i32r (imm i32 x) t5)))
+    (ior.i32r (imm i32 x) t5)))
   
   ((ior (mode i64) (const i32 x) op2)
    (temps t5) (out t5) 
@@ -288,7 +289,7 @@
   ((ior (mode i64) op1 op2)
    (temps t5) (out t5) 
    ((mov.rr op2 t5)
-    (or.rr op1 t5)))
+    (ior.rr op1 t5)))
 
   ;; xor
 
