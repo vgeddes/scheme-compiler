@@ -18,7 +18,7 @@
  
 ;; operands 
 
-(define-struct mc-vreg         (name hreg users data))
+(define-struct mc-vreg         (name hreg pref users data))
 
 (define-struct mc-imm          (size value))
 (define-struct mc-disp         (value))
@@ -48,9 +48,9 @@
   (lambda operands
     (match operands
        ((name)
-        (make-mc-vreg name #f'() '()))
-       ((name hreg-constraint)
-        (make-mc-vreg name #f '() '()))
+        (make-mc-vreg name #f #f '() '()))
+       ((name hreg pref)
+        (make-mc-vreg name hreg pref '() '()))
        (else (assert-not-reached)))))
           
 
@@ -140,7 +140,7 @@
                   vregs)
                => (lambda (vreg) vreg))
            (else
-             (let ((vreg (if (null? rest*) (mc-make-vreg name) (mc-make-vreg name (car rest*)))))
+             (let ((vreg (apply mc-make-vreg (cons name rest*))))
                (mc-context-vregs-set! cxt (cons vreg vregs))
                vreg)))))
        (else (assert-not-reached)))))

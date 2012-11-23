@@ -188,10 +188,8 @@
       (match e
         (('vreg x)
          `(,%mc-context-allocate-vreg (,%mc-block-cxt ,blk) ,x))
-        (('vreg x ('constraint r))
-         `(,%mc-context-allocate-vreg (,%mc-block-cxt ,blk) ,x ',r))
         (('hreg x)
-         `(,%mc-context-allocate-vreg (,%mc-block-cxt ,blk) ',x ',x))
+         `(,%mc-context-allocate-vreg (,%mc-block-cxt ,blk) ',x ',x #f))
         (('imm size x)
          `(,%make-mc-imm ',size ,x))
         (('disp x)

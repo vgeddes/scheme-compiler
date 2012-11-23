@@ -4,30 +4,34 @@
 
 (use matchable)
 (use srfi-1)
+(use srfi-69)
 
 (include "struct-syntax")
 (include "munch-syntax")
+
+(define *regs* '(rax rbx rcx rdx rsi rdi r8 r9 r10 r11 r12 r13 r14 r15))
+
+(define-struct scan-context (mcxt ranges hreg-pool))
+(define-struct node         (index value pred succ in out def use live))
+(define-struct range        (vreg hreg pref start end))
+(define-struct pool         (hregs ranges))
 
 (define assert-not-reached
   (lambda ()
     (error 'assert-not-reached)))
 
-(define-struct scan-context (mcxt ranges hreg-pool))
-(define-struct node         (index value pred succ in out def use live))
-(define-struct range        (vreg hreg pref start end))
-
 (define (format-range range)
   `(range ,(mc-vreg-name (range-vreg range))
           ,(range-hreg  range)
+          ,(range-pref  range)
           ,(range-start range)
           ,(range-end   range)))
 
-(define (format-step hregs-free current active fixed rest)
-  `(step ,(range-start  step)
-          (hregs-free  ,hregs-unused)
-          (current     ,(format-range current))
+(define (format-step pool cur active rest)
+  `(step ,(range-start  cur)
+          (hregs-free  ,(pool-hregs pool))
+          (current     ,(format-range cur))
           (active      ,@(map (lambda (range) (format-range range)) active))
-          (fixed       ,@(map (lambda (range) (format-range range)) fixed))
           (rest        ,@(map (lambda (range) (format-range range)) rest))))
 
 ;;
@@ -75,9 +79,10 @@
      (walk (mc-context-start cxt) (make-count-generator)))
 
 ;;
-;; Sort the graph nodes using a reverse pre-ordering
+;; Sort the graph nodes into reverse post-order
 ;;
 ;; Given the graph, with each node numbered from 1 to 6:
+;;
 ;;   1 --> 2 --> 3 --> 4
 ;;         \
 ;;           --> 5 --> 6
@@ -141,6 +146,18 @@
      node*)
    graph))
 
+(define (range-make vreg hreg pref start end)
+  (make-range vreg hreg pref start end))
+
+(define (range-fixed? r)
+  (and (mc-vreg-hreg (range-vreg r)) #t))
+
+(define (range-pref r)
+  (mc-vreg-pref (range-vreg r)))
+
+(define (range-fixed-hreg r)
+  (mc-vreg-hreg (range-vreg r)))
+
 ;; Determines whether live range r1 starts before r2
 ;;
 (define (range-starts-before? r1 r2)
@@ -153,7 +170,7 @@
 
 ;; Determines whether r1 and r2 overlap
 ;; TODO: we can surely remove redundant tests here
-(define (ranges-overlap? r1 r2)
+(define (range-overlap? r1 r2)
   (cond
     ((or (<= (range-end r1) (range-start r2)) (<= (range-end r2) (range-start r1)))
      #f)
@@ -178,7 +195,7 @@
 ;;
 ;; Compute live ranges for each vreg in the context
 ;;
-(define (compute-live-ranges cxt graph)
+(define (compute-ranges cxt graph)
 
    (analyze-liveness graph)
 
@@ -190,7 +207,7 @@
               (index (node-index node)))
           (cond
             ((null? range)
-             (mc-vreg-data-set! vreg (make-range vreg #f (mc-vreg-constraint vreg) index index)))
+             (mc-vreg-data-set! vreg (range-make vreg (mc-vreg-hreg vreg) (mc-vreg-pref vreg) index index)))
             (else
              (range-end-set! range index)))))
       (node-live node)))
@@ -205,204 +222,173 @@
                   (node-succ node)))))
 
   ;; make dummy ranges for unused variables
-  (for-each (lambda (arg)
+  (for-each (lambda (vreg)
               (cond
                 ((null? (mc-vreg-data vreg))
-                 (mc-vreg-data-set! vreg (make-range vreg #f (mc-vreg-constraint vreg) -1 -1)))))
-    (mc-cxt-args cxt))
+                 (mc-vreg-data-set! vreg (range-make vreg (mc-vreg-hreg vreg) (mc-vreg-pref vreg) -1 -1)))))
+    (mc-context-args cxt))
 
   ;; return all ranges
-  (map (lambda (vreg) (mc-vreg-data vreg)) (mc-cxt-vregs cxt)))
+  (map (lambda (vreg) (mc-vreg-data vreg)) (mc-context-vregs cxt)))
 
+(define (pool-make hregs ranges)
+  (let ((table  (make-hash-table eq? symbol-hash 24)))
+    (let loop ((hreg* hregs))
+      (match hreg*
+        (() '())
+        ((hreg . hreg*)
+         (hash-table-set! table hreg '())
+         (let loop-fx ((fx* ranges) (acc '()))
+           (match fx*
+             (() (hash-table-set! table hreg (reverse acc)))
+             ((fx . fx*)
+              (if (eq? hreg (range-hreg fx))
+                  (loop-fx fx* (cons fx acc))
+                  (loop-fx fx* acc)))))
+         (loop hreg*))))
+    (make-pool hregs table)))
 
-;; TODO: abstract over arch specifics
-(define *regs-default* '(rax rbx rcx rdx rsi rdi r8 r9 r10 r11 r12 r13 r14 r15))
+(define (pool-empty? pool)
+  (null? (pool-hregs pool)))
 
-(define (regs-reset)
-  (set! *regs* *all-regs*))
+(define (pool-reset pool)
+  (pool-hregs-set! pool *regs*))
 
-(define (regs-free?)
-  (not (null? *regs*)))
+(define (pool-push pool hreg)
+  (pool-hregs-set! pool (cons hreg (pool-hregs pool))))
 
-(define (reg-free reg)
-  (set! *regs* (cons reg *regs*)))
+(define (pool-member? pool hreg)
+  (and (memq hreg (pool-hregs pool)) #t))
 
-(define (reg-alloc reserved)
-  (cond
-   ((null? *regs*)
-    (assert-not-reached))
-   (else
-  
-                        
+(define (pool-remove pool hreg)
+  (pool-hregs-set! pool (lset-difference eq? (pool-hregs pool) (list hreg)))
+  hreg)
 
-    (let ((reg (find (lambda (reg)
-                       (not (find (lambda (ignore)
-                                    (eq? reg ignore))
-                                  ignores)))
-                     *regs*)))
-      (set! *regs* (lset-difference eq? *regs* (list reg)))
-      reg))))
-
-(define (regs-remove name)
-  (cond
-   ((null? *regs*) (assert-not-reached))
-   ((memq name *regs*)
-    (set! *regs* (lset-difference eq? *regs* (list name)))
-    name)
-   (else (assert-not-reached))))
-
-;; Expire constrained ranges which end before the given range starts
 ;;
-;; returns constrained ranges which have not yet expired
+;; Allocate an hreg to a range, taking preferences into account
 ;;
-(define (expire-constrained range constrained)
-  (let f ((c* constrained) (acc '()))
-    (match c*
-      (() (reverse acc))
-      ((c . c*)
-       (cond
-         ((< (range-end c) (range-start range))
-          (f c* acc))
-         (else
-          (f c* (cons c acc))))))))
+(define (hreg-alloc pool range)
+  (let ((pref (range-pref range)))
+    (cond
+      ((and pref (pool-member? pool pref) (can-alloc? pool range pref))
+       (pool-remove pool pref))
+      (else
+       (let loop ((hreg* (pool-hregs pool)))
+         (match hreg*
+           (() (assert-not-reached))
+           ((hreg . hreg*)
+            (if (can-alloc? pool range hreg)
+                (pool-remove pool hreg)
+                (loop hreg*)))))))))
+
+;;
+;; Check whether the given range overlaps with any of a hreg's fixed ranges
+;;
+(define (can-alloc? pool range hreg)
+  (let loop ((fxr* (hash-table-ref (pool-ranges pool) hreg)))
+    (match fxr*
+      (() #t)
+      ((fxr . fxr*)
+       (if (range-overlap? fxr range)
+           #f
+           (loop fxr*))))))
+
+
+;; get all fixed ranges
+(define (fixed-ranges ranges)
+  (fold (lambda (range acc)
+          (if (range-hreg range)
+              (cons range acc)
+              acc))
+       '()
+        ranges))
+
+;; get all unconstrained ranges
+(define (free-ranges ranges)
+  (fold (lambda (range acc)
+          (if (range-hreg range)
+              acc
+              (cons range acc)))
+       '()
+        ranges))
 
 ;; Expire active ranges which end before the given range starts
 ;;
 ;; returns active ranges that have not yet expired
 ;;
-(define (expire range active) 
-  (let f ((a* active) (acc '()))
-    (match a*
-      (() acc)
-      ((a . a*)
+(define (expire-active pool cur active) 
+  (let loop ((ac* active))
+    (match ac*
+      (() '())
+      ((ac . rest*)
        (cond
-         ((< (range-end a) (range-start range))
-          (regs-push (range-hreg a))
-          (f a* acc))
-         (else
-          (f a* (cons a acc))))))))
+         ((< (range-end ac) (range-start cur))
+          (pool-push pool (range-hreg ac))
+          (loop rest*))
+         (else ac*))))))
 
-(define (assign-register bt range active constrained)
-  (let ((hreg (range-constraint range)))
-    ;; check to see if this range is constrained to a particular register
-    (cond
-     ((or (eq? hreg 'rbp) (eq? hreg 'rsp))
-      ;; rbp and rsp do not take part in the linear scan alogorithm, so we freely assign them to constrained ranges.
-      (range-hreg-set! range hreg))
-     ((not hreg)
-      (let* ((not-use (let loop ((cr* constrained) (x '()))
-                         (match cr*
-                           (() x)
-                           ((cr . cr*)
-                            (cond
-                              ((> (range-start cr) (range-end range))
-                               (loop '() x))
-                              ((ranges-overlap? range cr)
-                               (loop cr* (lset-union eq? (list (range-constraint cr)) x)))
-                              (else (loop cr* x)))))))
-             (assigned (regs-pop not-use)))
-      ;; an unconstrained range; pop a free hreg off the stack of available hregs
-      (range-hreg-set! range assigned)))
-     (else
-      (range-hreg-set! range (regs-remove hreg))))))
+;; TODO optimize
+(define (update-active active range)
+  (sort (cons range active) range-ends-before?))
 
-(define (spill cxt ranges index vreg)
-  (let loop ((user* (mc-vreg-users vreg)) (ranges ranges))
-    (match user*
-      (()
-       (let f ((range* ranges) (x '()))
-         (match range*
-           (() (sort x range-compare-start))
-           ((range . range*)
-            (cond
-             ((mc-vreg-equal? (range-vreg range) vreg)
-              (f range* x))
-             (else
-              (range-hreg-set! range #f)
-              (f range* (cons range x))))))))
-      ((user . user*)  
-       (let ((tmp (mc-context-allocate-vreg cxt (gensym 't))))
-         ;; replace vreg use with another tmp. The vreg contents are now passed between/from the stack and the tmp 
-         (mc-instr-replace-vreg user vreg tmp)
-         (cond
-           ((mc-instr-is-read? user vreg)
-            (mc-instr-sp-load-set! user (list index tmp))))
-         (cond
-           ((mc-instr-is-written? vreg)
-            (mc-instr-sp-store-set! user (list index tmp))))
-         (let ((tmp-range (make-range tmp #f #f (mc-instr-number user) (mc-instr-number user))))
-               (loop user* (cons tmp-range ranges))))))))
+(define (iterate pool ranges)
+  (let loop ((re*  ranges)
+             (ac  '()))
+      (match re*
+        ;; return (#t) to indicate allocation success
+        (() (list #t))
+        ;; handle current range
+        ((cur . re*)
+       ;;  (pretty-print (format-step pool cur ac re*))
+         (let ((ac (expire-active pool cur ac)))
+          
+           (cond
+             ;; Backtrack if a spill is required
+             ;; return (#f vreg) to indicate allocation failure
+             ((pool-empty? pool)
+              (list #f (range-vreg cur)))
+             (else      
+              ;; allocate a free register
+              (range-hreg-set! cur (hreg-alloc pool cur))
+              (loop re* (update-active ac cur)))))))))
 
-(define (iterate ranges)
-  (call/cc
-    (lambda (backtrack)
-      (let loop ((ranges ranges)
-                 (active '())
-                 (constrained (sort 
-                   (fold (lambda (r x)
-                           (if (range-constraint r)
-                               (cons r x)
-                               x))
-                        '()
-                         ranges) range-compare-start)))
-        (if (null? ranges)
-            ;; return (#t) to indicate allocation success
-            (list #t)
-            (let* ((next         (car ranges))
-                   (active       (expire next active))
-                   (constrained  (expire-constrained next constrained)))
-              (pretty-print (format-iteration (range-start next) *regs* next active constrained (cdr ranges)))
-              ;; Backtrack if a spill is required
-              ;; return (#f vreg) to indicate allocation failure
-              (cond
-                ((not (regs-available?))
-                 (backtrack (list 'spill (range-vreg next)))))        
-              ;; Assign a register
-              (assign-register backtrack next active constrained)
-              ;; loop
-              (let ((active-sorted      (sort (cons next active) range-compare-end))
-                    (constrained-sorted (sort constrained range-compare-start))) 
-                (loop (cdr ranges) active-sorted constrained-sorted))))))))
-
-
-
-(define (scan-context-make mcxt ranges)
-  (let ((scxt (make-scan-context mcxt ranges '() *hregs-default)))
-    scxt))
-
-(define (scan cxt ranges)
-
-  (define (update-vregs ranges)
-    (for-each
-      (lambda (range)
-        (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
-      ranges))
-
+(define (scan cxt pool ranges)
   ;; enter scanning loop
-  (let loop ((ranges (sort ranges range-compare-start)))
-    (regs-reset)
-    (print (length ranges))
-    (match (iterate ranges)
+  (let loop ((ranges (sort ranges range-starts-before?)))
+    (pool-reset pool)
+    (match (iterate pool ranges)
       ((#f vreg)
        ;; Restart the scan after handling the spill
-       (loop (spill cxt ranges (spill-index-gen) vreg)))
+       ;;(loop (spill cxt ranges (spill-index-gen) vreg)))
+       (pretty-print (list 'spill (vreg-name vreg))))
       ((#t)
-       ;; update vregs to reflect the final register assignments
-       (update-vregs ranges)
+      '()
+      ))))
 
-      (pretty-print  
-         `(assignments ,(map (lambda (vreg)
-              `(,(mc-vreg-name vreg) ,(mc-vreg-hreg vreg)))
-            (mc-context-vregs cxt))))))))
 
-(define (allocate-registers-pass cxt)
-  (let* ((ranges (compute-live-ranges cxt (build-graph cxt))))
-    (scan cxt ranges)))
 
-(define (allocate-registers mod)
+(define (alloc-registers-pass cxt)
+  (let* ((ranges (compute-ranges cxt (build-graph cxt)))
+         (pool   (pool-make *regs* (fixed-ranges ranges))))
+    ;; enter scanning loop
+    (scan cxt pool (free-ranges ranges))
+
+ ;; update vregs to reflect the final register assignments
+       (for-each (lambda (range)
+                   (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
+                 ranges)
+
+    ;; print final assignments
+  ;;  (pretty-print  
+   ;;   `(assignments ,(map (lambda (vreg)
+    ;;                       `(,(mc-vreg-name vreg) ,(mc-vreg-hreg vreg)))
+    ;;                      (mc-context-vregs cxt))))))
+))
+
+(define (alloc-regs mod)
   (mc-context-for-each
     (lambda (cxt)
-      (allocate-registers-pass cxt))
+      (alloc-registers-pass cxt))
     mod)
   mod)
 

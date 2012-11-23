@@ -25,31 +25,23 @@
          `((lambda (,a)
              (begin ,@body2)) ,body1))))
      (('or) #f)         
-     (('or clause)
+     (('or ex1)
+      (expand ex1))
+     (('or ex1 ex2 ...)
       (expand
-       (let ((a (gensym)))
-         `(let ((,a ,clause))
-            (if ,a ,a ,a)))))
-     (('or clause1 clause2 ...)
-      (expand
-       (let ((a (gensym)))
-         `(let ((,a ,clause1))
-            (if ,a
-                ,a
-                (or ,@clause2))))))
+       (let ((tmp (gensym)))
+         `(let ((,tmp ,ex1))
+            (if ,tmp
+                ,tmp
+                (or ,@ex2))))))
      (('and) #t)
-     (('and clause)
+     (('and ex1)
+      (expand ex1))
+     (('and ex1 ex2 ...)
       (expand
-       (let ((a (gensym)))
-         `(let ((,a ,clause))
-            (if ,a ,a ,a)))))
-     (('and clause1 clause2 ...)
-      (expand
-       (let ((a (gensym)))
-         `(let ((,a ,clause1))
-            (if ,a
-                (and ,@clause2)
-                ,a)))))
+       `(if ,ex1
+            (and ,@ex2)
+            #f)))
      (('lambda (bindings ...) e1 e2 rest ...)
       (expand `(lambda (,@bindings)
                  (begin ,e1 ,e2 ,@rest))))
@@ -249,12 +241,16 @@
          (walk-cexp body)
          '()))
       ((comb args)
-       ;; reduce this comb if the first object is a lambda and none of the other objects are lambdas
-       (let ((first (car args)))
-         (cond
-           ((and (lambda? first) (fold (lambda (arg x) (if (lambda? arg) #f x)) #t (cdr args))) 
-            (substitute-vars (lambda-body first) (lambda-args first) (cdr args)))
-           (else cexp))))
+        (let* ((fn-reduced   (walk-cexp (car args)))
+               (args-reduced (map (lambda (arg) (walk-cexp arg)) (cdr args))))
+         (cond          
+           ;; reduce this comb if the first object is a lambda and none of the other objects are lambdas
+           ((and (lambda? fn-reduced)
+                 (fold (lambda (arg x)
+                         (if (lambda? arg) #f x))
+                       #t args-reduced))
+            (substitute-vars (lambda-body fn-reduced) (lambda-args fn-reduced) args-reduced))
+           (else (make-comb (cons fn-reduced args-reduced))))))
       ((prim name args result cexp)
        (make-prim name 
           args
@@ -348,7 +344,7 @@
       (else (error 'identify-primitives "not an AST node" cexp))))
 
 
-(define (basic-lambda-lift node)
+(define (raise-lambda node)
   ;; raise all lambda definitions to the top of the this lambda body
   (define (filter lst)
     (select-matching
@@ -396,16 +392,14 @@
                (defs (map normalize (collect body))))
           (if (null? defs)
               node
-              (make-lambda name args (make-fix defs (rewrite body)) '()))))))
+              (make-fix defs (rewrite body)))))))
   (let ((node (normalize node)))
     (cond
       ((lambda? node)
        (make-fix (list node)
          (make-app
            (make-variable (lambda-name node)) (list))))
-      (else
-        (make-fix (list)
-          node)))))
+      (else node))))
 
 (define (analyze-free-vars node)
   (let ((union (lambda lists
@@ -618,9 +612,11 @@
                                       (queue-push! (car x))
                                       (f (cdr x))))))
                              (else node)))))
-    (map queue-push! (fix-defs node))
-    (let f ((labels (list)))
-      (if (queue-empty?)
+    (cond
+      ((fix? node)
+       (map queue-push! (fix-defs node))
+       (let f ((labels (list)))
+        (if (queue-empty?)
           (make-fix labels (fix-body node))
           (let* ((node (queue-pop!)))
             (f (cons (make-lambda
@@ -628,7 +624,9 @@
                        (lambda-args node)
                        (flatten-node (lambda-body node))
                        '())
-                     labels)))))))
+                     labels))))))
+      (else (make-fix (list) node)))))
+      
 
 
 (define (selection-convert-lambda node mod)

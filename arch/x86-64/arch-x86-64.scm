@@ -19,11 +19,11 @@
 (define (make-context-x86-64 name params mod)
   (let* ((cxt         (make-mc-context name '() '() '()))
          (args        (map (lambda (param hint)
-                             (mc-make-vreg param hint))
+                             (mc-context-allocate-vreg cxt param #f hint))
                            params
                            *tail-call-hregs-x86-64*))
          (args-fixed  (map (lambda (arg hreg)
-                             (mc-context-allocate-vreg cxt (gensym 't) hreg))
+                             (mc-context-allocate-vreg cxt (gensym 't) hreg #f))
                            args
                            *tail-call-hregs-x86-64*))
          (blk         (mc-make-block cxt name)))
@@ -43,7 +43,7 @@
 (define (operand-format-x86-64 op)
   (cond
     ((mc-vreg? op)
-     (format "~s" (mc-vreg-name op)))
+     (format "~s" (mc-vreg-hreg op)))
     ((mc-imm? op)
      (format "~s" (mc-imm-value op)))
     ((mc-disp? op)
@@ -130,7 +130,7 @@
   (let* ((hregs      '(r8 r9 r10 r11 r12 r13 r14 r15))
          (hregs-used  (let f ((arg* args) (hregs hregs) (x '()))
                             (match arg*
-                              (() (map (lambda (hreg) (mc-context-allocate-vreg (mc-block-cxt blk) hreg hreg)) (reverse x)))
+                              (() (map (lambda (hreg) (mc-context-allocate-vreg (mc-block-cxt blk) hreg hreg #f)) (reverse x)))
                               ((arg . arg*)
                                (f arg* (cdr hregs) (cons (car hregs) x))))))
          (moves*      (map (lambda (hreg arg)
@@ -140,7 +140,6 @@
     
     ;; Select instructions for each move
     (for-each (lambda (reg arg)
-                (pretty-print (mc-vreg-name reg))
                 (cond
                   ((tree-temp? arg)
                    (arch-emit-code x86-64 blk
@@ -161,7 +160,7 @@
 
 (define (generate-bridge-context-x86-64 mod)
   (let* ((cxt  (make-mc-context '__scheme_exec '() '() '()))
-         (ptr  (mc-context-allocate-vreg cxt (gensym 't) 'rsi)))
+         (ptr  (mc-context-allocate-vreg cxt (gensym 't) 'rsi #f)))
 
 
     (mc-context-args-set! cxt (list ptr))

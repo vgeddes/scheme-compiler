@@ -60,13 +60,12 @@
     cps-convert
     beta-reduce
     identify-primitives
-    basic-lambda-lift
+    raise-lambda
     closure-convert
     flatten
     tree-convert
-    select-instructions))
-;;    allocate-registers))
- ;;   allocate-registers
+    select-instructions
+    alloc-regs))
 
 (define (compile pipeline source)  
   (let f ((pass pipeline) (input source))
@@ -80,11 +79,16 @@
     ((= (length argv) 1)
      (fprintf (current-output-port) "Usage: scc FILE\n"))
     (else
-      (let ((test-code (read-file (second argv))))
-        (mc-module-print (compile pipeline (car test-code)) (current-output-port))
-
-       ;; (pretty-print (write-sexp (compile pipeline (car test-code))))
-        ;;(tree-module-print (compile pipeline (car test-code)) (current-output-port))
+      (let* ((test-code (read-file (second argv)))
+             (output    (compile pipeline (car test-code))))
+        
+        (cond
+          ((mc-module? output)
+           (mc-module-print output (current-output-port)))
+          ((tree-module? output)
+           (tree-module-print output (current-output-port)))
+          (else 
+           (pretty-print (write-sexp output))))
        ))))
 
 (main (argv))
