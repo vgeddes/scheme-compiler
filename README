@@ -11,8 +11,8 @@ Current design
   conversion to the Tree IR.
 * Tree-based low-level IR
   Used as a convenient source IR for instruction selection. 
-* x86-64 code generator
-  Uses a near-optimal maximal munch algorithm, and a set of selection rules. 
+* x86-64 instruction selector
+  Uses a near-optimal maximal munch algorithm, and a set of pattern-matching rules. 
 * Linear scan register allocator
   After computing live ranges for temps, we allocate registers in a single 
   pass over the machine instructions. The allocator is able to temps which
