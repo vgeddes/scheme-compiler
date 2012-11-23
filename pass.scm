@@ -24,6 +24,9 @@
        (let ((a (gensym)))
          `((lambda (,a)
              (begin ,@body2)) ,body1))))
+     (('not ex1)
+      (expand
+        `(if ,ex1 #f #t)))
      (('or) #f)         
      (('or ex1)
       (expand ex1))
