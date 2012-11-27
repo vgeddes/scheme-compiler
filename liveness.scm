@@ -14,7 +14,7 @@
 (define-struct scan-context (mcxt ranges hreg-pool))
 (define-struct node         (index value pred succ in out def use live))
 (define-struct range        (vreg hreg pref start end))
-(define-struct pool         (hregs ranges))
+(define-struct pool         (hregs reg-names ranges))
 
 (define assert-not-reached
   (lambda ()
@@ -50,7 +50,7 @@
                          ((null? instr) (reverse nodes))
                          (else
                           (let ((number (counter)))
-                            (mc-instr-number-set! instr number)
+                            (mc-instr-index-set! instr number)
                             (f (mc-instr-next instr)
                                (cons (make-node number instr '() '() '() '() '() '() '()) nodes)))))))
               (head (car nodes))
@@ -246,19 +246,22 @@
                   (loop-fx fx* (cons fx acc))
                   (loop-fx fx* acc)))))
          (loop hreg*))))
-    (make-pool hregs table)))
+    (make-pool hregs hregs table)))
 
 (define (pool-empty? pool)
   (null? (pool-hregs pool)))
 
 (define (pool-reset pool)
-  (pool-hregs-set! pool *regs*))
+  (pool-hregs-set! pool (pool-reg-names pool)))
 
 (define (pool-push pool hreg)
   (pool-hregs-set! pool (cons hreg (pool-hregs pool))))
 
 (define (pool-member? pool hreg)
   (and (memq hreg (pool-hregs pool)) #t))
+
+(define (pool-count pool)
+  (length (pool-hregs pool)))
 
 (define (pool-remove pool hreg)
   (pool-hregs-set! pool (lset-difference eq? (pool-hregs pool) (list hreg)))
@@ -331,6 +334,51 @@
 (define (update-active active range)
   (sort (cons range active) range-ends-before?))
 
+;; remove range
+(define (remove-range vreg ranges)
+  (let f ((range* ranges) (x '()))
+    (match range*
+      (() (sort x range-starts-before?))
+      ((range . range*)
+       (cond
+         ((mc-vreg-equal? (range-vreg range) vreg)
+          (f range* x))
+         (else
+          (range-hreg-set! range #f)
+          (f range* (cons range x))))))))
+
+;; For our spilling heuristic, we select the longest range in active
+(define (select-range-to-spill active)
+  (car (sort active
+         (lambda (r1 r2)
+           (>= (- (range-end r1) (range-start r1)) (- (range-end r2) (range-start r2)))))))
+
+(define (add-spill spills index cxt instr vreg)
+  (let ((tmp (mc-context-allocate-vreg cxt (gensym 'g))))
+    ;; replace vreg use with another tmp, which will represent a scratch register. The vreg contents are now 
+    ;; passed between/from the stack and the scratch register
+    ;; add spill info for the user
+    (cond
+      ((and (mc-instr-is-read? instr vreg) (mc-instr-is-written? instr vreg))
+       (hash-table-set! spills (mc-instr-index instr) (list 'read-write instr index tmp)))
+      ((mc-instr-is-read? instr vreg)
+       (hash-table-set! spills (mc-instr-index instr) (list 'read instr index tmp)))
+      ((mc-instr-is-written? instr vreg)
+       (hash-table-set! spills (mc-instr-index instr) (list  'write instr index tmp)))
+      (else (assert-not-reached)))
+    ;; replace vreg with tmp in instruction
+    (mc-instr-replace-vreg instr vreg tmp)
+    ;; create a range for the scratch register
+    (make-range tmp #f #f (mc-instr-index instr) (mc-instr-index instr))))
+
+(define (spill spills index cxt ranges vreg)
+  (let loop ((user* (mc-vreg-users vreg)) (ranges ranges))
+    (match user*
+      (() (remove-range vreg ranges))
+      ((user . user*)
+       (let ((tmp (add-spill spills index cxt user vreg)))
+         (loop user* (cons tmp ranges)))))))
+
 (define (iterate pool ranges)
   (let loop ((re*  ranges)
              (ac  '()))
@@ -339,48 +387,64 @@
         (() (list #t))
         ;; handle current range
         ((cur . re*)
-       ;;  (pretty-print (format-step pool cur ac re*))
-         (let ((ac (expire-active pool cur ac)))
-          
+         (pretty-print (format-step pool cur ac re*))
+         (let ((ac (expire-active pool cur ac)))   
            (cond
              ;; Backtrack if a spill is required
              ;; return (#f vreg) to indicate allocation failure
-             ((pool-empty? pool)
-              (list #f (range-vreg cur)))
+             ((= (pool-count pool) 0)
+              (list #f (range-vreg (select-range-to-spill ac))))
              (else      
               ;; allocate a free register
               (range-hreg-set! cur (hreg-alloc pool cur))
               (loop re* (update-active ac cur)))))))))
 
-(define (scan cxt pool ranges)
+(define (scan cxt pool spills sp-index-gen ranges)
   ;; enter scanning loop
   (let loop ((ranges (sort ranges range-starts-before?)))
     (pool-reset pool)
     (match (iterate pool ranges)
       ((#f vreg)
        ;; Restart the scan after handling the spill
-       ;;(loop (spill cxt ranges (spill-index-gen) vreg)))
-       (pretty-print (list 'spill (vreg-name vreg))))
+       (pretty-print (list 'spill (mc-vreg-name vreg)))
+       (loop (spill spills (sp-index-gen) cxt ranges vreg)))
       ((#t)
-      '()
+       ;; update vregs to reflect the final register assignments
+       (for-each (lambda (range)
+                (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
+              ranges)
       ))))
 
+(define (rewrite-spills cxt spills)
+  (let ((rbp (mc-context-allocate-vreg cxt 'rbp 'rbp #f)))
+  (hash-table-for-each spills
+    (lambda (k v)
+       (match v
+         (('read-write instr index vreg)
+          (mc-block-insert-before (mc-instr-block instr) instr 
+            (x86-64.mov.mdr #f '() rbp (mc-make-disp (* 8 index)) vreg))
+          (mc-block-insert-after (mc-instr-block instr) instr 
+            (x86-64.mov.rmd #f '() vreg rbp (make-mc-disp (* 8 index)))))
+         (('read instr index vreg)
+          (mc-block-insert-before (mc-instr-block instr) instr 
+            (x86-64.mov.mdr #f '() rbp (make-mc-disp (* 8 index)) vreg)))
+         (('write instr index vreg)
+          (mc-block-insert-after (mc-instr-block instr) instr 
+            (x86-64.mov.rmd #f '() vreg rbp (make-mc-disp (* 8 index))))))))))
 
-
-(define (alloc-registers-pass cxt)
-  (let* ((ranges (compute-ranges cxt (build-graph cxt)))
-         (pool   (pool-make *regs* (fixed-ranges ranges))))
+(define (alloc-registers-pass cxt regs)
+  (let* ((ranges    (compute-ranges cxt (build-graph cxt)))
+         (pool      (pool-make regs (fixed-ranges ranges)))
+         (spills    (make-hash-table = number-hash 20))
+         (index-gen (make-count-generator)))
     ;; enter scanning loop
-    (scan cxt pool (free-ranges ranges))
+    (scan cxt pool spills index-gen (free-ranges ranges))
 
- ;; update vregs to reflect the final register assignments
-       (for-each (lambda (range)
-                   (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
-                 ranges)
 
+    (rewrite-spills cxt spills)
     ;; print final assignments
-  ;;  (pretty-print  
-   ;;   `(assignments ,(map (lambda (vreg)
+    ;;  (pretty-print  
+    ;;   `(assignments ,(map (lambda (vreg)
     ;;                       `(,(mc-vreg-name vreg) ,(mc-vreg-hreg vreg)))
     ;;                      (mc-context-vregs cxt))))))
 ))
@@ -388,7 +452,14 @@
 (define (alloc-regs mod)
   (mc-context-for-each
     (lambda (cxt)
-      (alloc-registers-pass cxt))
+      (alloc-registers-pass cxt *regs*))
+    mod)
+  mod)
+
+(define (alloc-regs-test mod regs)
+  (mc-context-for-each
+    (lambda (cxt)
+      (alloc-registers-pass cxt regs))
     mod)
   mod)
 

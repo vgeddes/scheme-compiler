@@ -1,6 +1,6 @@
 
 (declare (unit machine)
-         (uses nodes))
+         (uses nodes arch))
 
 (use matchable)
 (use srfi-1)
@@ -13,15 +13,15 @@
 (define-struct mc-block    (name head tail succ cxt))
 
 ;; instructions
-(define-struct mc-spec       (name fmt fmt-indices verifiers reads writes))
-(define-struct mc-instr      (spec ops next prev implicit-uses sp-load sp-store number block data))
+(define-struct mc-spec     (name fmt fmt-indices verifiers reads writes))
+(define-struct mc-instr    (spec ops next prev implicit-uses index block data))
  
 ;; operands 
 
-(define-struct mc-vreg         (name hreg pref users data))
+(define-struct mc-vreg     (name hreg pref users data))
 
-(define-struct mc-imm          (size value))
-(define-struct mc-disp         (value))
+(define-struct mc-imm      (size value))
+(define-struct mc-disp     (value))
 
 ;; Constructors
 
@@ -35,7 +35,7 @@
   (make-mc-block name '() '() '() cxt))
 
 (define (mc-make-instr blk spec implicit-uses operands)
-  (let ((instr (make-mc-instr spec operands '() '() implicit-uses '() '()  #f blk '())))
+  (let ((instr (make-mc-instr spec operands '() '() implicit-uses  #f blk '())))
     (for-each (lambda (op)
                 (cond
                    ((mc-vreg? op)
@@ -148,7 +148,6 @@
 ;; Printing
 
 (define (mc-module-print mod port)
-
   (fprintf port "section  .text\n\n")
   (fprintf port "  global __scheme_exec\n\n")
   (mc-context-for-each

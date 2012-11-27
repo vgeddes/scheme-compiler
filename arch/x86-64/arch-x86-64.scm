@@ -179,7 +179,6 @@
 
     cxt))
 
-
 ;; Selects x86-64 instructions for a tree node
 ;;
 (define (emit-statement-x86-64 block tree)
