@@ -27,7 +27,7 @@
            `(,%begin ,expr ,@expr*))
           ((((name fields* ...) expr expr* ...) clause* ...)
            (let ((bindings (generate-bindings v fields* 1))
-                 (altern (generate-body v clause*)))
+                 (altern   (generate-body v clause*)))
              `(,%if (,%structure? ,v ',name)
                     (,%let ,bindings
                            ,expr ,@expr*)
@@ -46,4 +46,5 @@
      (struct-case v
        (pat
         (struct-let* (cls* ...) body* ...))))))
-  
+
+

@@ -17,7 +17,7 @@ scc: main.o $(objects) $(objects_x86_64)
 
 nodes.o:   struct-syntax.scm
 main.o:    struct-syntax.scm
-pass.o:    struct-syntax.scm
+pass.o:    struct-syntax.scm hil-syntax.scm
 tree.o:    struct-syntax.scm
 arch/x86-64/arch-x86-64.o: arch-syntax.scm
 arch/x86-64/spec-x86-64.o: arch-syntax.scm
