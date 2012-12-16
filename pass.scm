@@ -4,6 +4,7 @@
 
 (use matchable)
 (use srfi-1)
+(use srfi-69)
 
 (include "hil-syntax")
 (include "struct-syntax")
@@ -13,20 +14,25 @@
     (node-case node
      ((hil-mod (entry))
       `(module ,(build-sexp entry)))
-     ((hil-letfn (defs body))
-      `(letfn ,(map build-sexp defs) ,(build-sexp body)))
      ((hil-if (x y z))
       `(if ,(build-sexp x)
            ,(build-sexp y)
            ,(build-sexp z)))
-     ((hil-fn (name params body))
-      `(fn ,name ,params ,(build-sexp body)))
-     ((hil-cont (name body))
-      `(cont (,name) ,(build-sexp body)))
+     ((hil-fn (name params body cxt))
+      `(let (,name (fn ,params ,(build-sexp body)))
+         ,(build-sexp cxt)))
+     ((hil-cont (name params body cxt))
+      `(let (,name (cont ,params ,(build-sexp body)))
+         ,(build-sexp cxt)))
+     ((hil-retcont (name value cxt))
+      `(let (,name (retcont (,value)))
+         ,(build-sexp cxt)))
    ;;  ((hil-fix defs body)
    ;;   `(fix ,(map write-sexp defs) ,(write-sexp body)))
      ((hil-app (fn args))
       `(app ,(build-sexp fn) ,@(map build-sexp args)))
+     ((hil-appcont (cont value))
+      `(appcont ,(build-sexp cont) ,(build-sexp value)))
  ;;    ((app name args)
  ;;     `(app ,(write-sexp name) ,(map write-sexp args)))
  ;;    ((prim name args result cexp)
@@ -36,7 +42,13 @@
      ((hil-const (value)) value)
      ((hil-var   (name))  name)
      ((hil-nil   ())     'nil)
-     ((hil-prim  (name params cont)) `(prim ,(build-sexp name) ,(map build-sexp params) ,(build-sexp cont)))
+     ((hil-prim  (name params)) `(prim ,name ,(map build-sexp params)))
+     ((hil-rec   (name values cxt))
+      `(let ((,name (record ,@(map build-sexp values))))
+         ,(build-sexp cxt)))
+     ((hil-ref   (name rec index cxt))
+      `(let ((,name (ref ,(build-sexp rec) ,index)))
+         ,(build-sexp cxt)))
  ;;    ((record values name cexp)
   ;;    `(record ,(map write-sexp values) ,(write-sexp name) ,(write-sexp cexp)))
  ;;    ((select index record name cexp)
@@ -54,7 +66,7 @@
  ;;               ,blocks))
  ;;    ((block label code)
  ;;     `(block ,label ,code))
-     (else (assert-not-reached)))))
+     (else node ))))
 
 ;;(define-node lil-mod      (cxts))
 
@@ -65,24 +77,25 @@
 ;;(define-node lil-context  (name params start))
 
 
-(define-node hil-mod    (entry))
-(define-node hil-if     (x y z))
-(define-node hil-app    (fn args))
-(define-node hil-const  (value))
-(define-node hil-var    (name))
-(define-node hil-prim   (name params cont))
-(define-node hil-fn     (name params body))
-(define-node hil-cont   (name body))
-(define-node hil-nil    ())
-(define-node hil-letfn  (defs body))
-(define-node hil-letfn  (defs body))
+(define-node hil-mod      (entry))
+(define-node hil-if       (x y z))
+(define-node hil-app      (fn args))
+(define-node hil-appcont  (cont value))
+(define-node hil-const    (value))
+(define-node hil-var      (name))
+(define-node hil-prim     (name params))
+(define-node hil-fn       (name params body cxt))
+(define-node hil-cont     (name params body cxt))
+(define-node hil-ref      (name rec index cxt))
+(define-node hil-rec      (name values cxt))
+(define-node hil-retcont  (name params cxt))
 
 (define (data-set node key val)
- (node-data-set! (cons (cons key val) (node-data node))))
+ (##sys#block-set! node 1 (cons (cons key val) (##sys#block-ref node 1))))
 
-(define (data-ref node key val)
+(define (data-ref node key)
   (cond
-    ((assq key (node-data node)) => cdr)
+    ((assq key (##sys#block-ref node 1)) => cdr)
      (else #f)))
 
 ;;
@@ -160,11 +173,26 @@
 ;; 3)
 ;;
 
-(define *prims*
-  '(fx+ fx- fx* fx/ fx< fx> fx<= fx>= fx= car cdr cons null? pair? list? boolean? integer? string? __return))
+(define *prim-table*
+  '((fx+     . __sc_fxadd)
+    (fx-     . __sc_fxsub)
+    (fx*     . __sc_fxmul)
+    (fx/     . __sc_fxdiv)
+    (fx<     . __sc_fxlt)
+    (fx>     . __sc_fxgt)
+    (fx<=    . __sc_fxle)
+    (fx>=    . __sc_fxge)
+    (fx=     . __sc_fxeq)
+    (car     . __sc_car)
+    (cdr     . __sc_cdr)
+    (cons    . __sc_cons)
+    (null?   . __sc_nullp)
+    (pair?   . __sc_pairp)
+    (list?   . __sc_listp)
+    (fixnum? . __sc_fixnump)))
 
 (define (prim? name)
-  (and (memq name *prims*) #t))
+  (and (assq name *prim-table*) #t))
 
 (define (rename name scopes)
   (let loop ((scope* scopes))
@@ -215,152 +243,185 @@
       (('if _ ...)
        (error cs "ill-formed conditional expression"))
       (('fn (bindings ...) body)
-       (hil-fn (gensym 'f) bindings (H body)))
-      (('lambda _ ...)
-       (error cs "ill-formed conditional expression"))
+       (let ((name (gensym 'fn)))
+         (hil-fn name bindings (H body) (hil-var name))))
       ((? null?)
        (hil-const ex))
       ((? boolean?)
        (hil-const ex))
       ((? number?)
        (hil-const ex))
-      ((fn ex* ...)
-       (hil-app (H fn) (map H ex*)))
+      ((ex* ...)
+       (let* ((ex-data  (reverse
+                          (fold (lambda (ex x)
+                                  (match ex
+                                    (('fn (param* ...) body)
+                                     (cons (list 'proc (gensym 'fn) ex) x))
+                                    (_
+                                     (cons (list 'other ex) x))))
+                                '()
+                                ex*)))
+              (args (map (lambda (dt)
+                           (match dt
+                             (('proc name fn)
+                              (hil-var name))
+                             (('other obj)
+                              (H obj))
+                             (else (assert-not-reached))))
+                          ex-data))
+              (defs (fold (lambda (dt x)
+                               (match dt
+                                 (('proc name fn)
+                                  (match fn
+                                    (('fn (arg* ...) body)
+                                     (hil-fn name arg* (H body) x))))
+                                 (_ x)))
+                           (if (and (hil-var? (car args)) (prim? (hil-var-name (car args))))
+                               (hil-prim (hil-var-name (car args)) (cdr args))
+                               (hil-app  (car args) (cdr args)))
+                           ex-data)))
+       defs))
       ((? symbol?)
        (hil-var ex))))
   (hil-mod (H ex)))
 
 (define (cps-convert node)
-  (define (cps-convert node cont)
+
+   (define (analyze exps)
+     (let loop ((exp* exps) (atoms '()) (cpx '()))
+       (match exp*
+         (() (cons (reverse atoms) cpx))
+         ((exp . exp*)
+          (cond
+           ((hil-var? exp)
+            (loop exp* (cons exp atoms) cpx))
+           ((hil-const? exp)
+            (loop exp* (cons exp atoms) cpx))
+           (else
+            (let ((tmp (gensym 't)))
+              (loop exp* (cons (hil-var tmp) atoms) (cons (cons exp tmp) cpx)))))))))
+
+   (define (build exps cont leafp)
+     (let* ((data     (analyze exps))
+            (atoms    (car data))
+            (cpx*     (cdr data))
+            (leafexp  (leafp atoms cont)))
+       (let loop ((cpx* cpx*) (cexp leafexp))
+         (match cpx*
+           (() cexp)
+           ((cpx . cpx*)
+            (match cpx
+              ((exp . tmp)
+               (let ((cname (gensym 'c)))
+                 (loop cpx* (hil-cont cname (list tmp) cexp
+                              (F exp (hil-var cname))))))))))))
+
+   (define (F node cont)
     (node-case node
       ((hil-const (value))
-       (if (null? cont)
-           node
-           (hil-app cont (list node))))
+       (hil-appcont cont node))
       ((hil-var (name))
-       (if (null? cont)
-           node
-           (hil-app cont (list node))))
-      ((hil-fn (name params body))
+       (hil-appcont cont node))
+      ((hil-fn (name params body cxt))
        (let* ((cn       (gensym 'c))
               (node-cps (hil-fn
                           name
                           (cons cn params)
-                          (cps-convert body (hil-var cn)))))
-         (if (null? cont)
-             node-cps
-             (hil-app cont (list node-cps)))))
+                          (F body (hil-var cn))
+                          (F cxt cont))))
+          node-cps))
       ((hil-app (fn args))
-       ;; x - combination args
-       ;; y - new args for combination (x -> y)
-       ;; z - args which are not atoms
-       ;; w - names for continuations
-       (let f ((x (cons fn args)) (y '()) (z '()) (u '()))
-         (cond
-          ((null? x)
-           (let ((form-args (reverse y)))
-             (let g ((form (hil-app (car form-args) (cons cont (cdr form-args)))) (y y) (z z) (u u))
-                     (if (null? z)
-                         form
-                         (g
-                          (cps-convert (car z)
-                                       (hil-cont (car u) form))
-                          (cdr y)
-                          (cdr z)
-                          (cdr u))))))
-          ((hil-const? (car x))
-           (f (cdr x) (cons (car x) y) z u))
-          ((hil-var? (car x))
-           (f (cdr x) (cons (car x) y) z u))
-          ((hil-fn? (car x))
-           (f (cdr x) (cons (cps-convert (car x) '()) y) z u))
-          (else
-           (let ((nm (gensym 't)))
-             (f (cdr x) (cons (hil-var nm) y) (cons (car x) z) (cons nm u)))))))
-      ((hil-if (test conseq altern))
-       (let ((kn (gensym 't))
-             (fn (gensym 'f))
-             (tn (gensym 't)))
-         (hil-app
-           (hil-cont kn
-                       (cps-convert test
-                                    (hil-cont tn
-                                          (hil-if
-                                            (hil-var tn)
-                                            (cps-convert conseq (hil-var kn))
-                                            (cps-convert altern (hil-var kn))))))
-            (list cont))))
-      (else (error 'cps-convert "not an AST node" node))))
-  (let ((cn (gensym 'f))
+       (let* ((leafp (lambda (atoms cont)
+                       (hil-app (car atoms) (cons cont (cdr atoms)))))
+              (cexp  (build (cons fn args) cont leafp)))
+         cexp))
+      ((hil-prim (name params))
+       (let* ((leafp (lambda (atoms cont)
+                      (hil-prim name (cons cont atoms))))
+              (cexp (build params cont leafp)))
+         cexp))
+      ((hil-if (test x y))
+       (cond
+         ((or (hil-var? test) (hil-const? test))
+          (hil-if
+           test
+           (F x cont)
+           (F y cont)))
+       (else
+        (let ((cn  (gensym 'c))
+              (tn  (gensym 't)))
+          (hil-cont cn (list tn)
+            (hil-if
+             (hil-var tn)
+             (F x cont)
+             (F y cont))
+            (F test (hil-var cn)))))))
+      (else (assert-not-reached))))
+  (let ((cn (gensym 'c))
         (tn (gensym 't)))
-    (hil-mod
-    (cps-convert
-      (hil-mod-entry node)
-      (hil-cont tn
-        (hil-app
-         (hil-var '__return)
-         (list (hil-var tn))))))))
-
+   (hil-mod
+     (hil-retcont cn
+       tn
+       (F (hil-mod-entry node) (hil-var cn))))))
 
 ;;
 ;; reduce the administrative reducible expressions produced by the CPS transform
 ;;
 ;; Example: ((lambda (x) (... x ...)) v)
 ;;                                        =>   (... v ...)
-;;
+;; (define (beta-reduce node)
+;;   (define dt (make-hash-table eq? symbol-hash 500))
+;;   (define (add-info
+;;   (define (B cexp dt)
+;;     (node-case cexp
+;;      ((hil-mod (body))
+;;       (hil-mod (B body dt)))
+;;      ((hil-var ())
+;;       cexp)
+;;      ((hil-const ())
+;;       cexp)
+;;      ((hil-if (x y z))
+;;       (hil-if
+;;         x
+;;         (B y)
+;;         (B z)))
+;;      ((hil-fn (params body))
+;;       (hil-fn
+;;         params
+;;         (B body)))
+;;      ((hil-cont (params body))
+;;       (hil-cont params (B body)))
+;;      ((hil-app (fn args))
+;;       (let* ((fn   (B fn))
+;;              (args (map (lambda (arg)
+;;                           (B arg))
+;;                         args)))
+;;         (cond
+;;          ;; Rules for reducing applications
+;;          ;; 1. Reduce if the applied object is a literal lambda AND if no other argument is a literal lambda
+;;          ;; 2. Need to think of some more...
+;;          ((and (hil-fn? fn)
+;;                (fold (lambda (arg x)
+;;                        (if (or (hil-fn? arg) (hil-cont? arg)) #f x))
+;;                      #t
+;;                      args))
+;;            (substitute (hil-fn-body fn) (hil-fn-params fn) args))
+;;          ((and (hil-cont? fn)
+;;                (fold (lambda (arg x)
+;;                        (if (or (hil-fn? arg) (hil-cont? arg)) #f x))
+;;                      #t
+;;                      args))
+;;           (substitute (hil-cont-body fn) (list (hil-cont-name fn)) args))
+;;          (else (hil-app fn args)))))
+;;      ((hil-primc (name params cont))
+;;       (hil-primc name
+;;                  params
+;;                  (B cont)))
+;;      ((hil-nil ())
+;;       cexp)
+;;      (else (assert-not-reached))))
 
-(define (beta-reduce node)
-  (define (walk-cexp cexp)
-    (node-case cexp
-     ((hil-mod (body))
-      (hil-mod (walk-cexp body)))
-     ((hil-var ())
-      cexp)
-     ((hil-const ())
-      cexp)
-     ((hil-if (x y z))
-      (hil-if
-        x
-        (walk-cexp y)
-        (walk-cexp z)))
-     ((hil-fn (name params body))
-      (hil-fn
-        name
-        params
-        (walk-cexp body)))
-     ((hil-cont (name body))
-      (hil-cont name (walk-cexp body)))
-     ((hil-app (fn args))
-      (let* ((fn   (walk-cexp fn))
-             (args (map (lambda (arg)
-                          (walk-cexp arg))
-                        args)))
-        (cond
-         ;; Rules for reducing applications
-         ;; 1. Reduce if the applied object is a literal lambda AND if no other argument is a literal lambda
-         ;; 2. Need to think of some more...
-         ((and (hil-fn? fn)
-               (fold (lambda (arg x)
-                       (if (or (hil-fn? arg) (hil-cont? arg)) #f x))
-                     #t
-                     args))
-           (substitute (hil-fn-body fn) (hil-fn-params fn) args))
-         ((and (hil-cont? fn)
-               (fold (lambda (arg x)
-                       (if (or (hil-fn? arg) (hil-cont? arg)) #f x))
-                     #t
-                     args))
-          (substitute (hil-cont-body fn) (list (hil-cont-name fn)) args))
-         (else (hil-app fn args)))))
-     ((hil-primc (name params cont))
-      (hil-primc name
-                 params
-                 (walk-cexp cont)))
-     ((hil-nil ())
-      cexp)
-     (else (assert-not-reached))))
-
- (walk-cexp node))
+;;  (B node))
 
 ;;
 ;; Substitutes objects for names in a HIL expression
@@ -406,51 +467,6 @@
 
   (walk-cexp exp)))
 
-(define (identify-prims cexp)
-  (define (F cexp)
-    (node-case cexp
-      ((hil-mod (body))
-       (hil-mod (F body)))
-      ((hil-var ())
-       cexp)
-      ((hil-const ())
-       cexp)
-      ((hil-if (test conseq altern))
-       (hil-if
-        (F test)
-        (F conseq)
-        (F altern)))
-      ((hil-fn (name params body))
-       (hil-fn
-        name
-        params
-        (F body)))
-      ((hil-cont (name body))
-       (hil-cont
-        name
-        (F body)))
-      ((hil-app (fn args))
-       (if (and (hil-var? fn) (prim? (hil-var-name fn)))
-           (let* ((cont     (car args))
-                  (cont-new (cond
-                             ((hil-fn? cont)
-                              (hil-fn (hil-fn-name cont)
-                                      (hil-fn-params cont)
-                                      (F (hil-fn-body cont))))
-                             ((hil-cont? cont)
-                              (hil-cont (hil-cont-name cont)
-                                        (F (hil-cont-body cont))))
-                             ((hil-var? cont)
-                              cont)
-                             (else (print cont)  (assert-not-reached)))))
-             (hil-prim
-               fn
-               (cdr args)
-               cont-new))
-           (hil-app (F fn) (map F args))))
-      (else (error 'identify-primitives "not an AST node" cexp))))
-  (F cexp))
-
 (define select-matching
   (lambda (fn lst)
     (reverse
@@ -461,117 +477,46 @@
            (list)
            lst))))
 
-(define (raise-fns node)
-  ;; raise all lambda definitions to the top of the this lambda body
-  (define (filter lst)
-    (select-matching
-      (lambda (x)
-        (or (hil-fn? x) (hil-cont? x)))
-      lst))
-  (define (collect node)
-    ;; collect nested lambda nodes in this scope
-    (node-case node
-      ((hil-fn ())
-       (list node))
-      ((hil-cont ())
-       (list node))
-      ((hil-prim (name args cexp))
-       (append (filter args) (collect cexp)))
-      ((hil-if (test conseq altern))
-       (append (collect test) (collect conseq) (collect altern)))
-      ((hil-app (name args))
-       (filter (cons name args)))
-      (else (list))))
-  (define (rewrite node)
-    ;; rewrite tree, replacing lambda nodes with their names
-    (node-case node
-      ((hil-fn (name))
-       (hil-var name))
-      ((hil-cont (name))
-       (hil-var name))
-      ((hil-prim (name args cexp))
-       (hil-prim name (map rewrite args) (rewrite cexp)))
-      ((hil-if (test conseq altern))
-       (hil-if (rewrite test) (rewrite conseq) (rewrite altern)))
-      ((hil-app (fn args))
-       (hil-app (rewrite fn) (map rewrite args)))
-      (else node)))
-  (define (normalize node)
-    (cond
-      ((hil-fn? node)
-        (let* ((name (hil-fn-name node))
-               (args (hil-fn-params node))
-               (body (hil-fn-body node))
-               (defs (map normalize (collect body))))
-          (if (null? defs)
-              node
-              (hil-fn name args (hil-letfn defs (rewrite body))))))
-      ((hil-cont? node)
-       (let* ((name (hil-cont-name node))
-              (body (hil-cont-body node))
-              (defs (map normalize (collect body))))
-         (if (null? defs)
-             node
-             (hil-cont name (hil-letfn defs (rewrite body))))))
-      (else
-        (let* ((name (gensym 'f))
-               (args (list))
-               (body node)
-               (defs (map normalize (collect body))))
-          (if (null? defs)
-              node
-              (hil-letfn defs (rewrite body)))))))
-  (let ((node (normalize (hil-mod-entry node))))
-    (cond
-      ((hil-fn? node)
-       (hil-letfn (list node)
-         (hil-app
-           (hil-var (hil-fn-name node)) (list))))
-      ((hil-cont? node)
-       (hil-letfn (list node)
-                  (hil-app
-                   (hil-var (hil-cont-name node)) (list))))
-      (else node))))
-
 (define (analyze-free-vars node)
   (let ((union (lambda lists
                  (apply lset-union (cons eq? lists))))
         (diff  (lambda lists
                  (apply lset-difference (cons eq? lists)))))
-    (struct-case node
-      ((variable name)
-       (diff (list name) *primitives*))
-      ((constant) '())
-      ((if test conseq altern)
-       (union
-        (analyze-free-vars test)
-        (analyze-free-vars conseq)
-        (analyze-free-vars altern)))
-      ((app name args)
-       (let f ((x '()) (args (cons name args)))
-         (if (null? args)
-             x
-             (f (union x (analyze-free-vars (car args))) (cdr args)))))
-      ((prim name args result cexp)
-       (let f ((x (list)) (args args))
-         (if (null? args)
-             (union x (diff (analyze-free-vars cexp) (list (variable-name result))))
-             (f (union x (analyze-free-vars (car args))) (cdr args)))))
-      ((fix defs body)
-       (apply union (append (map analyze-free-vars defs)
-                            (list (diff (analyze-free-vars body)
-                                        (map (lambda (def)
-                                               (lambda-name def))
-                                             defs))))))
-      ((lambda name args body)
-       (lambda-free-vars-set! node
-                              (diff (analyze-free-vars body) args))
-       (lambda-free-vars node))
-      ((label)
-       (list))
-      ((nil)
-       (list))
-      (else (error 'analyze-free-vars "not an AST node" node)))))
+    (define (A node)
+      (node-case node
+        ((hil-mod (entry))
+         (A entry))
+        ((hil-var (name))
+         (list name))
+        ((hil-const (value)) '())
+        ((hil-if (test conseq altern))
+         (union
+          (A test)
+          (A conseq)
+          (A altern)))
+        ((hil-app (fn args))
+         (let loop ((x '()) (args (cons fn args)))
+           (if (null? args)
+               x
+             (loop (union x (A (car args))) (cdr args)))))
+        ((hil-prim (name params))
+         (let loop ((x (list)) (args params))
+           (if (null? args)
+               x
+             (loop (union x (A (car args))) (cdr args)))))
+        ((hil-appcont (cont value))
+         (if (hil-var? value)
+             (list (hil-var-name value))
+             (list)))
+        ((hil-fn (name params body cxt))
+         (data-set node 'free (diff (A body) params))
+         (union (data-ref node 'free) (diff (A cxt) (list name))))
+        ((hil-cont (name params body cxt))
+         (union (diff (A body) params) (diff (A cxt) (list name))))
+        ((hil-retcont (name value cxt))
+         (diff (A cxt) (list value)))
+        (else (assert-not-reached))))
+    (A node)))
 
 (define (closure-index name names)
   (let f ((i 1) (names names))
@@ -581,14 +526,15 @@
             i
             (f (+ i 1) (cdr names))))))
 
-
-(define (primitive-application args)
-  (let ((fun (car args)))
-    (if (memq (variable-name fun) *primitives*)
-        (error 'primitive-application "should not reach here" (variable-name fun))
-        (let ((fn (gensym 't)))
-          (make-select 0 fun (make-variable fn)
-                (make-app (make-variable fn) (cons fun (cdr args))))))))
+(define (rewrite-app fn args kfn)
+  (let ((name (hil-var-name fn)))
+    (cond
+      ((assq name kfn)
+       => (lambda (x)
+            (hil-app fn (cons (car args) (cons (hil-var (cdr x)) (cdr args))))))
+      (else
+        (let ((tmp (gensym 't)))
+          (hil-ref tmp fn 0 (hil-app (hil-var tmp) (cons (car args) (cons fn (cdr args))))))))))
 
 ;;
 ;; assume all functions escape -> each function takes a closure arg
@@ -600,346 +546,249 @@
    * 3. rewrite lambda applications. Extract function label from closure and apply function to closure + args
  |#
 
-(define (closure-convert-body node c-name free-vars)
-  (struct-case node
-    ((fix defs body)
-     (let ((old-names (map (lambda (def)
-                             (lambda-name def))
-                           defs))
-           (x (map (lambda (def)
-                     (closure-convert-body def c-name free-vars))
-                   defs)))
-       (make-fix
-         x
-         (closure-convert-body
-          (let f ((x x) (y old-names) (form body))
-            (if (null? x)
-                form
-                (f (cdr x)
-                   (cdr y)
-                   #| when making the closure record, we use a label node to represent the lambda's function ptr |#
-                   (make-record
-                     (cons (make-label (lambda-name (car x)))
-                           (map (lambda (v) (make-variable v))
-                                (lambda-free-vars (car x))))
-                     (make-variable (car y))
-                     form))))
-          c-name free-vars))))
-    ((lambda name args body free-vars)
-     (let* ((cn (gensym 'c))
-            (converted (make-lambda (gensym 'f) (cons cn args) (closure-convert-body body cn free-vars) '())))
-       (lambda-free-vars-set! converted free-vars)
-       converted))
-    ((app name args)
-     (let f ((x (cons name args)) (y '()) (z '()))
-       (cond
-        ((null? x)
-         (let g ((cexp (primitive-application (reverse y))) (z z))
-           (if (null? z)
-               cexp
-               (g (make-select
-                    (closure-index (caar z) free-vars)
-                    (make-variable c-name)
-                    (make-variable (cdar z))
-                    cexp)
-                  (cdr z)))))
-         ((variable? (car x))
-          (let ((name (variable-name (car x))))
-            (if (memq name free-vars)
-                (let ((exists (assq name z)) (temp (gensym 't)))
-                  (if exists
-                    (f (cdr x) (cons (make-variable (cdr exists)) y) z)
-                    (f (cdr x) (cons (make-variable temp) y) (cons (cons name temp) z))))
-                (f (cdr x) (cons (car x) y) z))))
-         (else (f (cdr x) (cons (closure-convert-body (car x) #f '()) y) z)))))
-   ((prim name args result cexp)
-     (let f ((x args) (y (list)) (z (list)))
-       (if (null? x)
-           (let g ((cexp (make-prim name (reverse y) result (closure-convert-body cexp c-name free-vars))) (z z))
-             (if (null? z)
-                 cexp
-                 (g (make-select
-                      (closure-index (caar z) free-vars)
-                      (make-variable c-name)
-                      (make-variable (cdar z))
-                      cexp)
-                    (cdr z))))
-           (if (variable? (car x))
-               (let ((name (variable-name (car x))))
-                 (if (memq name free-vars)
-                     (let ((exists (assq name z)) (temp (gensym 't)))
-                       (if exists
-                    (f (cdr x) (cons (make-variable (cdr exists)) y) z)
-                    (f (cdr x) (cons (make-variable temp) y) (cons (cons name temp) z))))
-                     (f (cdr x) (cons (car x) y) z)))
-               (f (cdr x) (cons (closure-convert-body (car x) #f '()) y) z)))))
-   ((record values name cexp)
-     (let f ((x values) (y (list)) (z (list)))
-       (if (null? x)
-           (let g ((cexp (make-record (reverse y) name (closure-convert-body cexp c-name free-vars))) (z z))
-             (if (null? z)
-                 cexp
-                 (g (make-select
-                      (closure-index (caar z) free-vars)
-                      (make-variable c-name)
-                      (make-variable (cdar z))
-                      cexp)
-                    (cdr z))))
-           (struct-case (car x)
-             ((variable name)
-              (if (memq name free-vars)
-                  (let ((exists (assq name z)) (temp (gensym 't)))
-                    (if exists
-                        (f (cdr x) (cons (make-variable (cdr exists)) y) z)
-                        (f (cdr x) (cons (make-variable temp) y) (cons (cons name temp) z))))
-                  (f (cdr x) (cons (car x) y) z)))
-             ((label name)
-              (f (cdr x) (cons (car x) y) z))
-             (else (error 'closure-convert-body (car x)))))))
-    ((variable name)
-     (if (memq name free-vars)
-         (let ((temp (gensym 't)))
-           (make-select
-             (closure-index name free-vars)
-             (make-variable c-name)
-             (make-variable temp)
-             (make-variable temp)))
-         node))
-    ((if test conseq altern)
-     (make-if
-       (closure-convert-body test c-name free-vars)
-       (closure-convert-body conseq c-name free-vars)
-       (closure-convert-body altern c-name free-vars)))
-    ((constant)
-     node)
-    ((label)
-     node)
-    ((nil)
-     node)
-    (else (error 'closure-convert "node" node))))
+
 
 (define (closure-convert node)
+
+  (define (build-refs atoms env free leafp)
+    (define (analyze atoms)
+      (let loop ((at* atoms) (new '()) (refs '()))
+        (match at*
+          (() (cons (reverse new) (apply lset-union (cons eq? (map (lambda (ref) (list ref)) refs)))))
+          ((at . at*)
+           (cond
+            ((and (hil-var? at) (memq (hil-var-name at) free))
+             (let ((tmp (gensym 't)))
+               (loop at* (cons (hil-var tmp) new) (cons (cons (hil-var-name at) tmp) refs))))
+            (else
+             (loop at* (cons at new) refs)))))))
+    (let* ((data        (analyze atoms))
+           (atoms-bound (car data))
+           (atoms-free  (cdr data))
+           (leafexp     (leafp atoms-bound)))
+      (let loop ((ref* atoms-free) (exp leafexp))
+        (match ref*
+          (() exp)
+          ((ref . ref*)
+           (match ref
+             ((name . tmp)
+              (loop ref* (hil-ref tmp (hil-var env) (closure-index name free) exp)))))))))
+
+  (define (R atom kfn)
+    (cond
+     ((and (hil-var? atom) (assq (hil-var-name atom) kfn))
+      => (lambda (x)
+           (hil-var (cdr x))))
+     (else atom)))
+
+  (define (R* atom* kfn)
+    (map (lambda (x) (R x kfn)) atom*))
+
+  (define (F node env free kfn)
+    (node-case node
+      ((hil-mod (entry))
+       (hil-mod (F entry env free kfn)))
+      ((hil-fn (name params body cxt))
+       (let* ((fn-env     (gensym 'e))
+              (fn-free    (data-ref node 'free))
+              (cxt*       (F (hil-rec
+                               fn-env
+                               (cons (hil-var name)
+                                     (map (lambda (x)
+                                            (hil-var x))
+                                          fn-free))
+                               cxt)
+                             env
+                             free
+                             (cons (cons name fn-env) kfn)))
+              (fn         (hil-fn name (cons (car params) (cons fn-env (cdr params))) (F body fn-env fn-free kfn) cxt*)))
+         (data-set fn 'free fn-free)
+         fn))
+      ((hil-cont (name params body cxt))
+       (let* ((cxt*       (F cxt
+                             env
+                             free
+                             kfn))
+              (cont       (hil-cont name params (F body env free kfn) cxt*)))
+         cont))
+      ((hil-retcont (name value cxt))
+       (hil-retcont name value (F cxt env free kfn)))
+      ((hil-app (fn args))
+       (let ((exp (build-refs (cons fn (R* args kfn))
+                              env
+                              free
+                              (lambda (atoms)
+                                (rewrite-app (car atoms) (cdr atoms) kfn)))))
+         exp))
+      ((hil-prim (name params))
+       (let ((exp (build-refs (R* params kfn)
+                              env
+                              free
+                              (lambda (atoms)
+                                (hil-prim name atoms)))))
+         exp))
+      ((hil-rec (name values cxt))
+       (let ((exp (build-refs (R* (cdr values) kfn)
+                              env
+                              free
+                            (lambda (atoms)
+                              (hil-rec name (cons (car values) atoms) (F cxt env free kfn))))))
+         exp))
+      ((hil-if (test x y))
+       (let ((x*  (if (or (hil-var? x) (hil-const? x))
+                      (R x kfn)
+                      (F x env free kfn)))
+             (y*  (if (or (hil-var? y) (hil-const? y))
+                      (R y kfn)
+                      (F y env free kfn)))
+             (if* (if (and (hil-var? test) (memq (hil-var-name test) free))
+                      (hil-ref tmp (hil-var env) (closure-index (hil-var-name test) free)
+                               (hil-if (hil-var tmp) x* y*))
+                      (hil-if (R test kfn) x* y*))))
+         if*))
+       ((hil-appcont (cont value))
+        (cond
+         ((and (hil-var? value) (memq (hil-var-name value) free))
+          (let ((tmp (gensym 't)))
+            (hil-ref tmp (hil-var env) (closure-index (hil-var-name value) free)
+                     (hil-appcont cont (hil-var tmp)))))
+         (else (hil-appcont cont (R value kfn)))))
+ ;;      ((hil-const ())
+;;        node)
+;;       ((hil-var ())
+;;        node)
+       (else  (assert-not-reached))))
   (analyze-free-vars node)
-  (closure-convert-body node #f '()))
+  (F node '() '() '()))
 
-(define (flatten node)
-  (letrec ((queue (list))
-           (queue-push! (lambda (node)
-                          (set! queue
-                                (append queue (list node)))))
-           (queue-pop!  (lambda ()
-                          (let ((front (car queue)))
-                            (set! queue
-                                  (cdr queue))
-                           front)))
-           (queue-empty? (lambda ()
-                           (null? queue)))
-           (flatten-node (lambda (node)
-                           (struct-case node
-                             ((fix defs body)
-                              (let f ((x defs))
-                                (if (null? x)
-                                    body
-                                    (begin
-                                      (queue-push! (car x))
-                                      (f (cdr x))))))
-                             (else node)))))
+(define (tree-convert-cexp cexp cont blk mod)
+
+  (define (branch cexp cont pred)
+    ;; process the code path referenced by `cexp' and return a label to the start block of the newly created subtree
+    (let* ((blk (tree-make-block (gensym 'b) '() '() '() '() (tree-block-function pred))))
+      (tree-block-pred-set! blk pred)
+      (tree-block-add-succ! pred blk)
+      (F cexp cont blk)
+      (tree-make-label (tree-block-name blk))))
+
+  (define (tree-atom x)
     (cond
-      ((fix? node)
-       (map queue-push! (fix-defs node))
-       (let f ((labels (list)))
-        (if (queue-empty?)
-          (make-fix labels (fix-body node))
-          (let* ((node (queue-pop!)))
-            (f (cons (make-lambda
-                       (lambda-name node)
-                       (lambda-args node)
-                       (flatten-node (lambda-body node))
-                       '())
-                     labels))))))
-      (else (make-fix (list) node)))))
+     ((hil-const? x)
+      (tree-make-constant 'i64 (hil-const-value x)))
+     ((hil-var? x)
+      (tree-make-temp (hil-var-name x)))
+     (else
+      (assert-not-reached))))
 
-
-
-(define (selection-convert-lambda node mod)
-
-  (define (start-new-block expr pred-block)
-    ;; process the code path referenced by `expr' and return a label to the start block of the newly created subtree
-    (let* ((block (tree-make-block (gensym) '() '() '() '() (tree-block-function pred-block))))
-      (tree-block-pred-set! block pred-block)
-      (tree-block-add-succ! pred-block block)
-      (walk-node expr block)
-      (tree-make-label (tree-block-name block))))
-
-  (define (convert-atom x)
-    (cond
-      ((constant? x)
-       (tree-make-constant 'i32 (constant-value x)))
-      ((variable? x)
-       (tree-make-temp (variable-name x)))
-      ((label? x)
-       (tree-make-label (label-name x)))
-      (else
-       (assert-not-reached))))
-
-  (define *tree-boolean-shift* (tree-constant-get 'i8 (immediate-rep *boolean-shift*)))
-  (define *tree-boolean-tag*   (tree-constant-get 'i8 (immediate-rep *boolean-tag*)))
-
-  (define (convert-prim-binop op e1 e2 block)
-    (case op
-      ((fx+)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-add 'i64 e1 e2)))
-         t1))
-      ((fx-)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-sub 'i64 e1 e2)))
-         t1))
-      ((fx*)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-mul 'i64 e1 e2)))
-         t1))
-      ((fx<=)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-cmp 'le e1 e2))
-              (t2    (tree-build-shl 'i64 *tree-boolean-shift* t1))
-              (t3    (tree-build-ior 'i64 *tree-boolean-tag*   t2)))
-         t3))
-      ((fx>=)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-cmp 'ge e1 e2))
-              (t2    (tree-build-shl 'i64 *tree-boolean-shift* t1))
-              (t3    (tree-build-ior  'i64 *tree-boolean-tag*   t2)))
-         t3))
-      ((fx<)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-cmp 'lt e1 e2))
-              (t2    (tree-build-shl 'i64 *tree-boolean-shift* t1))
-              (t3    (tree-build-ior 'i64 *tree-boolean-tag*   t2)))
-         t3))
-      ((fx>)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-cmp 'gt e1 e2))
-              (t2    (tree-build-shl 'i64 *tree-boolean-shift* t1))
-              (t3    (tree-build-ior 'i64 *tree-boolean-tag*   t2)))
-         t3))
-      ((fx=)
-       (let* ((e1    (convert-atom e1))
-              (e2    (convert-atom e2))
-              (t1    (tree-build-cmp 'eq e1 e2))
-              (t2    (tree-build-shl 'i64 *tree-boolean-shift* t1))
-              (t3    (tree-build-ior 'i64 *tree-boolean-tag*   t2)))
-         t3))
-      (else (assert-not-reached))))
-
-  (define (emit-stores block values base)
-    (let f ((values values) (i 0))
-      (match values
-        (() '())
-        ((v . v*)
-           (tree-block-add-statement! block
-             (cond
-               ((tree-constant? v)
-                (tree-build-store 'i64 v (tree-build-add 'i32 base (tree-constant-get 'i32 (* 8 i)))))
-               ((tree-temp? v)
-                (tree-build-store 'i64
-                  v (tree-build-add 'i32 base (tree-constant-get 'i32 (* 8 i)))))
-               ((tree-label? v)
-                (tree-build-store 'i64
-                  (tree-build-load 'ptr64 v) (tree-build-add 'i32 base (tree-constant-get 'i32 (* 8 i)))))
-               (else (assert-not-reached))))
-
-             (f v* (+ i 1))))))
-
-  (define (walk-node node block)
-    (struct-case node
-      ((select index record name cexp)
-       (let* ((record (convert-atom record))
-              (t1     (tree-build-load 'i64 (tree-build-add 'i32 record (tree-constant-get 'i32 (* 8 index)))))
-              (t2     (tree-build-assign (variable-name name) t1)))
-         (tree-block-add-statement! block t2)
-         (walk-node cexp block)))
-      ((record values name cexp)
-       (let* ((heap-ptr (gensym 't))
-              (t1   (tree-build-assign heap-ptr (tree-build-load 'i64 (tree-make-label 'heap_ptr))))
-              (t2   (tree-build-assign (variable-name name) (tree-make-temp heap-ptr)))
-              (t3   (tree-build-store 'i64
-                      (tree-build-add 'i64
-                        (tree-make-temp heap-ptr)
-                        (tree-constant-get 'i32 (* 8 (length values))))
-                      (tree-make-label 'heap_ptr))))
-         (tree-block-add-statement! block t1)
-         (tree-block-add-statement! block t2)
-         (tree-block-add-statement! block t3)
-         (emit-stores block (map (lambda (v) (convert-atom v)) values) (convert-atom name))
-         (walk-node cexp block)))
-      ((app name args)
-       ;; remember to support label targets in future
-       (let* ((target (convert-atom name))
-              (args (map (lambda (arg)
-                           (convert-atom arg))
-                         args))
-              (len  (length args))
-              (t0 (tree-build-call 'tail target args)))
-        (tree-block-add-statement! block t0)
-         '()))
-      ((nil) '())
-      ((if test conseq altern)
-       (let* ((test (convert-atom test))
-              (block1 (start-new-block conseq block))
-              (block2 (start-new-block altern block))
+  (define (F node cont blk)
+    (node-case node
+      ((hil-fn (name params body cxt))
+       (tree-convert-fn node mod)
+       (F cxt cont blk))
+      ((hil-cont (name params body cxt))
+       (F cxt (car params) blk)
+       (F body cont blk))
+      ((hil-retcont (name value cxt))
+       (F cxt value blk)
+       (tree-block-add-statement! blk (tree-build-return (tree-make-temp value))))
+      ((hil-ref (name rec index cxt))
+       (let* ((rec  (tree-atom rec))
+              (t1   (tree-build-load  'i64 (tree-build-add 'i32 rec (tree-constant-get 'i32 (* 8 index)))))
+              (t2   (tree-build-assign name t1)))
+         (tree-block-add-statement! blk t2)
+         (F cxt cont blk)))
+      ((hil-rec (name values cxt))
+       (let* ((t0 (tree-build-assign
+                    name
+                    (tree-build-call 'ccall
+                      (tree-make-label '__sc_record)
+                      (map (lambda (arg)
+                             (tree-atom arg))
+                           values)))))
+         (tree-block-add-statement! blk t0)
+         (F cxt cont blk)))
+      ((hil-appcont (cont value))
+       (let ((t0 (tree-build-return (tree-atom value))))
+         (tree-block-add-statement! blk t0)))
+      ((hil-app (fn args))
+       (let* ((tgt    (tree-make-label (hil-var-name fn)))
+              (args*  (map (lambda (arg)
+                            (tree-atom arg))
+                            (cdr args)))
+              (t0     (tree-build-call 'sc tgt args*)))
+          (cond
+            ((not cont)
+            (let* ((tmp  (gensym 't))
+                   (t1   (tree-build-assign tmp t0))
+                   (t2   (tree-build-return (tree-make-temp tmp))))
+              (tree-block-add-statement! blk t1)
+              (tree-block-add-statement! blk t2)))
+           (else
+            (let ((t1  (tree-build-assign cont t0)))
+              (tree-block-add-statement! blk t1))))))
+      ((hil-if (test x y))
+       (let* ((test (tree-atom test))
+              (blkx (branch x cont blk))
+              (blky (branch y cont blk))
               (t0 (tree-build-cmp 'eq test (tree-constant-get 'i64 *false-value*)))
-              (t1 (tree-build-brc t0 block1 block2)))
-         (tree-block-add-statement! block t1)
-         '()))
-      ((prim name args result cexp)
-       (let ((name   (variable-name name))
-             (result (variable-name result)))
-         (case name
-           ((fx+ fx- fx* fx<= fx>= fx< fx> fx=)
-            (let* ((t0 (convert-prim-binop name (first args) (second args) block))
-                   (t1 (tree-build-assign result t0)))
-             (tree-block-add-statement! block t1)
-              (walk-node cexp block)))
-           ((return)
-            (let* ((e1 (convert-atom (first args)))
-                   (t0 (tree-build-return e1)))
-              (tree-block-add-statement! block t0)))
-           (else (assert-not-reached)))))))
+              (t1 (tree-build-brc t0 blkx blky)))
+         (tree-block-add-statement! blk t1)))
+      ((hil-prim (name params))
+         (cond
+           ((prim? name)
+            (let* ((tgt    (tree-make-label (cdr (assq name *prim-table*))))
+                   (args   (map (lambda (arg)
+                                 (tree-atom arg))
+                                (cdr params)))
+                   (t0     (tree-build-call  'ccall tgt args)))
+              (cond
+               ((not cont)
+                (let* ((tmp  (gensym 't))
+                       (t1   (tree-build-assign tmp t0))
+                       (t2   (tree-build-return (tree-make-temp tmp))))
+                  (tree-block-add-statement! blk t1)
+                  (tree-block-add-statement! blk t2)))
+               (else
+                (let ((t1  (tree-build-assign cont t0)))
+                  (tree-block-add-statement! blk t1))))))
+           (else (assert-not-reached))))))
 
-  (struct-case node
-    ((lambda name args body)
-     (let* ((new-args (map (lambda (arg)
+  (F cexp cont blk))
+
+(define (tree-convert-fn node mod)
+  (node-case node
+    ((hil-fn (name params body cxt))
+     (let* ((params* (map (lambda (arg)
                             (tree-make-temp arg))
-                          args))
-            (fun (tree-make-function name new-args '() mod))
-            (entry (tree-make-block name '() '() '() '() fun)))
-
-       (tree-function-entry-set! fun entry)
-
-       ;; walk the lambda body
-       (walk-node body entry)
-       fun))))
+                          (cdr params)))
+            (fun      (tree-make-function name params* '() mod))
+            (blk      (tree-make-block (gensym 'b) '() '() '() '() fun)))
+       (tree-module-add-function! mod fun)
+       (tree-function-entry-set! fun blk)
+       (tree-convert-cexp body #f blk mod)))))
 
 (define (tree-convert node)
-  (struct-case node
-    ((fix defs body)
-     (let* ((mod  (tree-make-module))
-            (defs (cons (make-lambda 'begin '() body '()) defs)))
+  (node-case node
+    ((hil-mod (entry))
+     (let* ((mod    (tree-make-module))
+            (fun    (tree-make-function '__begin '() '() mod))
+            (blk    (tree-make-block    (gensym 'b) '() '() '() '() fun)))
+       (tree-module-add-function! mod fun)
+       (tree-function-entry-set! fun blk)
+       (tree-convert-cexp entry #f blk mod)
+       mod))
+    (else (assert-not-reached))))
 
-       ;; convert the definitions into function bodies
-       (for-each (lambda (def)
-               (tree-module-add-function! mod (selection-convert-lambda def mod)))
-                 defs)
-      mod
-       ))))
+       ;; ((hil-cont (name params body cxt))
+       ;;  (let* ((mod    (tree-make-module))
+       ;;         (fun    (tree-make-function '__begin '() '() mod))
+       ;;         (blk    (tree-make-block    (gensym 'b) '() '() '() '() fun)))
+       ;;    (tree-module-add-function! mod fun)
+       ;;    (tree-function-entry-set! fun blk)
+       ;;    (tree-convert-cexp cxt (car params) blk mod)
+       ;;    (tree-block-add-statement! blk (tree-build-return (tree-make-temp (car params))))
+       ;;    mod))
+       ;;   (else (assert-not-reached))))))
 
 (define (select-instructions mod)
   (struct-case mod
@@ -1000,3 +849,6 @@
 (define *null-value*    #x1)
 (define *false-value* (immediate-rep #f))
 (define *true-value*  (immediate-rep #t))
+
+(define *tree-boolean-shift* (tree-constant-get 'i8 (immediate-rep *boolean-shift*)))
+(define *tree-boolean-tag*   (tree-constant-get 'i8 (immediate-rep *boolean-tag*)))

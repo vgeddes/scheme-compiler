@@ -16,9 +16,6 @@
     hil-convert
     alpha-convert
     cps-convert
-    beta-reduce
-    identify-prims
-    raise-fns
     closure-convert
     flatten
     tree-convert
@@ -31,9 +28,8 @@
     alpha-convert
     hil-convert
     cps-convert
-    beta-reduce
-    identify-prims
-    raise-fns
+    closure-convert
+    tree-convert
    ))
 
 (define (compile pipeline source)
