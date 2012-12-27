@@ -7,261 +7,281 @@
 
 (include "struct-syntax")
 
-;; aggregate structures 
-(define-struct mc-module   (contexts))
-(define-struct mc-context  (name args start vregs))
-(define-struct mc-block    (name head tail succ cxt))
+;; aggregate structures
+(define-struct mmod   (cxts))
+(define-struct mcxt   (name args strt vrgs))
+(define-struct mblk   (name head tail succ cxt))
 
 ;; instructions
-(define-struct mc-spec     (name fmt fmt-indices verifiers reads writes))
-(define-struct mc-instr    (spec ops next prev implicit-uses index block data))
- 
-;; operands 
+(define-struct mspec  (name fmt fmt-indices verifiers reads writes))
+(define-struct minst  (spec ops nxt prv iu idx blk data))
 
-(define-struct mc-vreg     (name hreg pref users data))
+;; operands
+(define-struct mvr    (name hreg pref usrs data))
+(define-struct mim    (size value))
+(define-struct mdi    (value))
 
-(define-struct mc-imm      (size value))
-(define-struct mc-disp     (value))
+;; constructors
+(define (mmod-make)
+  (make-mmod '()))
 
-;; Constructors
-
-(define (mc-make-module)
-  (make-mc-module '()))
-
-(define (mc-make-context name params mod)
+(define (mcxt-make name params mod)
   (arch-make-context name params mod))
 
-(define (mc-make-block cxt name)
-  (make-mc-block name '() '() '() cxt))
+(define (mblk-make cxt name)
+  (make-mblk name '() '() '() cxt))
 
-(define (mc-make-instr blk spec implicit-uses operands)
-  (let ((instr (make-mc-instr spec operands '() '() implicit-uses  #f blk '())))
+(define (minst-make blk spec iu ops)
+  (let ((instr (make-minst spec ops '() '() iu #f blk '())))
     (for-each (lambda (op)
                 (cond
-                   ((mc-vreg? op)
-                    (mc-vreg-add-user op instr))))
-              operands)
-    (and blk (mc-block-append blk instr))
+                   ((mvr? op)
+                    (mvr-add-user op instr))))
+              ops)
+    (and blk (mblk-append blk instr))
     instr))
 
-(define mc-make-vreg
+(define mvr-make
   (lambda operands
     (match operands
        ((name)
-        (make-mc-vreg name #f #f '() '()))
+        (make-mvr name #f #f '() '()))
        ((name hreg pref)
-        (make-mc-vreg name hreg pref '() '()))
+        (make-mvr name hreg pref '() '()))
        (else (assert-not-reached)))))
-          
+
+(define (mdi-make value)
+  (make-mdi value))
+
+(define (mim-make size value)
+  (make-mim size value))
+
 
 ;; Operand Protocol
 
-(define (mc-operand-equal? o1 o2)
- (or (mc-vreg-equal? o1 o2)
-     (mc-imm-equal?  o1 o2)
-     (mc-disp-equal? o1 o2)))
+(define (mop-equal? o1 o2)
+ (or (mvr-equal? o1 o2)
+     (mim-equal? o1 o2)
+     (mdi-equal? o1 o2)))
 
-(define (mc-operand-format op)
+(define (mop-format op)
   (arch-operand-format op))
 
 ;; Vreg Protocol
 
-(define (mc-vreg-equal? v1 v2)
-  (and (mc-vreg? v1) (mc-vreg? v2) (eq? v1 v2)))
+(define (mvr-equal? v1 v2)
+  (and (mvr? v1) (mvr? v2) (eq? v1 v2)))
 
-(define (mc-vreg-add-user vreg instr)
-  (mc-vreg-users-set! vreg (cons instr (mc-vreg-users vreg))))
+(define (mvr-add-user vreg instr)
+  (mvr-usrs-set! vreg (cons instr (mvr-usrs vreg))))
 
-(define (mc-vreg-remove-user vreg instr)
-  (mc-vreg-users-set! vreg
-     (lset-difference mc-vreg-equal? (mc-vreg-users vreg) (list instr))))
+(define (mvr-remove-user vreg instr)
+  (mvr-usrs-set! vreg
+     (lset-difference mvr-equal? (mvr-usrs vreg) (list instr))))
 
-(define (mc-vreg-param? v)
-  (mc-vreg-attribs v))
+(define (mvr-param? v)
+  (mvr-attribs v))
 
 ;; Imm Protocol
 
-(define (mc-imm-equal? i1 i2)
-  (and (mc-imm? i1) (mc-imm? i2) (eq? i1 i2)))
+(define (mim-equal? i1 i2)
+  (and (mim? i1) (mim? i2) (eq? i1 i2)))
 
 ;; Disp Protocol
 
-(define (mc-disp-equal? d1 d2)
-  (and (mc-disp? d1) (mc-disp? d2) (eq? d1 d2)))
+(define (mdi-equal? d1 d2)
+  (and (mdi? d1) (mdi? d2) (eq? d1 d2)))
 
 ;; Instruction Protocol
 
-;; Get all vregs that are read 
-(define (mc-instr-vregs-read instr)
+;; Get all vregs that are read
+(define (minst-vregs-read instr)
   (arch-vregs-read instr))
 
 ;; Get all vregs that are written
-(define (mc-instr-vregs-written instr)
+(define (minst-vregs-written instr)
   (arch-vregs-written instr))
 
-(define (mc-instr-is-read? instr vreg)
+(define (minst-is-read? instr vreg)
   (and (find (lambda (x)
-               (mc-vreg-equal? x vreg))
-             (mc-instr-vregs-read instr))
+               (mvr-equal? x vreg))
+             (minst-vregs-read instr))
        #t))
 
-(define (mc-instr-is-written? instr vreg)
+(define (minst-is-written? instr vreg)
   (and (find (lambda (x)
-               (mc-vreg-equal? x vreg))
-             (mc-instr-vregs-written instr))
+               (mvr-equal? x vreg))
+             (minst-vregs-written instr))
        #t))
 
 ;; Replace a vreg
-(define (mc-instr-replace-vreg instr vreg x)
+(define (minst-replace-vreg instr vreg x)
   (define (replace ops)
     (reverse
     (fold (lambda (op ops)
             (cond
-               ((mc-operand-equal? op vreg)
-                (mc-vreg-remove-user op instr)
-                (mc-vreg-add-user x instr)
+               ((mop-equal? op vreg)
+                (mvr-remove-user op instr)
+                (mvr-add-user x instr)
                 (cons x ops))
                (else
                 (cons op ops))))
           '()
            ops)))
-   (mc-instr-ops-set! instr (replace (mc-instr-ops instr))))
+   (minst-ops-set! instr (replace (minst-ops instr))))
 
 ;; Context Protocol
 
-(define mc-context-allocate-vreg
+(define mcxt-alloc-vreg
   (lambda operands
     (match operands
       ((cxt name rest* ...)
-       (let ((vregs (mc-context-vregs cxt)))
+       (let ((vregs (mcxt-vrgs cxt)))
          (cond
            ((find (lambda (vreg)
-                    (eq? (mc-vreg-name vreg) name))
+                    (eq? (mvr-name vreg) name))
                   vregs)
                => (lambda (vreg) vreg))
            (else
-             (let ((vreg (apply mc-make-vreg (cons name rest*))))
-               (mc-context-vregs-set! cxt (cons vreg vregs))
+             (let ((vreg (apply mvr-make (cons name rest*))))
+               (mcxt-vrgs-set! cxt (cons vreg vregs))
                vreg)))))
        (else (assert-not-reached)))))
 
 ;; Printing
 
-(define (mc-module-print mod port)
+(define (mmod-print mod port)
   (fprintf port "section  .text\n\n")
   (fprintf port "  global __scheme_exec\n\n")
-  (mc-context-for-each
-     (lambda (context)
-       (mc-context-print context port))
+  (mcxt-for-each
+     (lambda (cxt)
+       (mcxt-print cxt port))
      mod))
 
-(define (mc-context-print context port)
-  (struct-case context
-    ((mc-context name args entry)
+(define (mcxt-print cxt port)
+  (struct-case cxt
+    ((mcxt name args entry)
 
-     (fprintf port "  # context: name=~s args=~s\n" name (map (lambda (arg) (mc-vreg-name arg)) args))
-     
-     (mc-block-for-each
+     (fprintf port "  # context: name=~s args=~s\n" name (map (lambda (arg) (mvr-name arg)) args))
+
+     (mblk-for-each
         (lambda (block)
-            (mc-block-print block port))
-        context))))
+            (mblk-print block port))
+        cxt))))
 
-(define (mc-block-print block port)
+(define (mblk-print block port)
   (struct-case block
-    ((mc-block name head tail succ)
+    ((mblk name head tail succ)
      ;; print label
      (fprintf port "  ~a:\n" name)
      ;; print code
-     (mc-instr-for-each
+     (minst-for-each
         (lambda (instr)
-           (mc-instr-print instr port))
+           (minst-print instr port))
          block)
      (fprintf port "\n"))))
 
-(define (mc-instr-print instr port)
-  (let* ((fmt         (mc-spec-fmt (mc-instr-spec instr)))
-         (fmt-indices (mc-spec-fmt-indices (mc-instr-spec instr)))
-         (ops-vect    (list->vector (mc-instr-ops instr)))
+
+(define (minst-print instr port)
+  (let* ((fmt         (mspec-fmt (minst-spec instr)))
+         (fmt-indices (mspec-fmt-indices (minst-spec instr)))
+         (ops-vect    (list->vector (minst-ops instr)))
          (ops-sorted  (reverse (fold (lambda (i x)
                                       (cons (vector-ref ops-vect (- i 1)) x))
                                     '()
                                     fmt-indices))))
-;;  (fprintf port "                                     # live = ~s\n" (map (lambda (vreg) (mc-vreg-name vreg)) (mc-instr-data instr)))
+;;  (fprintf port "                                     # live = ~s\n" (map (lambda (vreg) (mvr-name vreg)) (minst-data instr)))
   (fprintf port "    ")
   (fprintf port
     (apply format
            (cons
              fmt
-             (map mc-operand-format ops-sorted))))
+             (map mop-format ops-sorted))))
   (fprintf port "\n")))
 
+;; Block
 
-(define (mc-block-append blk instr)
+(define prev-set minst-prv-set!)
+(define next-set minst-nxt-set!)
+(define tail-set mblk-tail-set!)
+(define head-set mblk-head-set!)
+
+(define (mblk-prepend blk instr)
   (cond
-    ((and (null? (mc-block-head blk))
-          (null? (mc-block-tail blk)))
-     (mc-block-head-set! blk instr)
-     (mc-block-tail-set! blk instr))
-    (else
-     (let ((tail (mc-block-tail blk)))
-       (mc-instr-prev-set! instr tail)
-       (mc-instr-next-set! tail instr)
-       (mc-block-tail-set! blk instr))))
+   ((and (null? (mblk-head blk))
+         (null? (mblk-tail blk)))
+    (head-set blk instr)
+    (tail-set blk instr))
+   (else
+    (let ((head (mblk-tail blk)))
+      (prev-set head instr)
+      (next-set instr head)
+      (head-set blk instr))))
   blk)
 
-(define (mc-block-insert-after blk instr x)
-  (let ((next (mc-instr-next instr))
-        (prev (mc-instr-prev instr)))
-    (cond
-      ((and (null? next))
-       (mc-instr-prev-set! x     instr)
-       (mc-instr-next-set! x     '())
-       (mc-instr-next-set! instr x)
-       (mc-block-tail-set! blk   x))
-      (else
-       (mc-instr-prev-set! x     instr)
-       (mc-instr-next-set! x     next)
-       (mc-instr-next-set! instr x)
-       (mc-instr-prev-set! next  x)))))
+(define (mblk-append blk instr)
+  (cond
+    ((and (null? (mblk-head blk))
+          (null? (mblk-tail blk)))
+     (head-set blk instr)
+     (tail-set blk instr))
+    (else
+     (let ((tail (mblk-tail blk)))
+       (prev-set instr tail)
+       (next-set tail instr)
+       (tail-set blk instr))))
+  blk)
 
-(define (mc-block-insert-before blk instr x)
-  (let ((next (mc-instr-next instr))
-        (prev (mc-instr-prev instr)))
-    (cond
-      ((and (null? prev))
-       (mc-instr-next-set! x     instr)
-       (mc-instr-prev-set! x     '())
-       (mc-instr-prev-set! instr x)
-       (mc-block-head-set! blk   x))
-      (else
-       (mc-instr-prev-set! x     prev)
-       (mc-instr-next-set! x     instr)
-       (mc-instr-prev-set! instr x)
-       (mc-instr-next-set! prev  x)))))
-
+(define (mblk-insert blk curs pos inst)
+  (let ((next (minst-nxt curs))
+        (prev (minst-prv curs)))
+    (case pos
+      ((after)
+       (cond
+        ((and (null? next))
+         (prev-set inst     curs)
+         (next-set inst     '())
+         (next-set curs inst)
+         (tail-set blk   inst))
+        (else
+         (prev-set inst curs)
+         (next-set inst next)
+         (next-set curs inst)
+         (prev-set next inst))))
+      ((before)
+       (cond
+        ((and (null? prev))
+         (next-set inst curs)
+         (prev-set inst '())
+         (prev-set curs inst)
+         (head-set blk  inst))
+        (else
+         (prev-set inst prev)
+         (next-set inst curs)
+         (prev-set curs inst)
+         (next-set prev inst))))
+      (else (assert-not-reached)))))
 
 ;; iteration
 
-(define (mc-context-for-each f mod)
-  (for-each f (mc-module-contexts mod)))
+(define (mcxt-for-each f mod)
+  (for-each f (mmod-cxts mod)))
 
 
-(define (mc-block-for-each f context)
-  (define (visit-block block f)
-    (let ((succ (mc-block-succ block)))
-      (f block)
+(define (mblk-for-each f cxt)
+  (define (visit-block blk f)
+    (let ((succ (mblk-succ blk)))
+      (f blk)
       (for-each (lambda (succ)
                   (visit-block succ f))
                 succ)))
-    (visit-block (mc-context-start context) f))
+    (visit-block (mcxt-strt cxt) f))
 
 
-(define (mc-instr-for-each f block)
-  (let ((head (mc-block-head block)))
+(define (minst-for-each f blk)
+  (let ((head (mblk-head blk)))
     (let walk ((x head))
       (cond
        ((not (null? x))
         (f x)
-        (walk (mc-instr-next x)))))))
-
-
+        (walk (minst-nxt x)))))))

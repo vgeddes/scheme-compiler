@@ -1,36 +1,37 @@
-(declare (unit tree)
-         (uses extras utils))
+(module tree
 
-(use srfi-1)
-(use srfi-13)
-(use matchable)
+  (import utils)
+  (import extra)
 
-(import-for-syntax matchable)
+  (import srfi-1)
+  (import srfi-13)
+  (import matchable)
+  (import-for-syntax matchable)
 
-(include "struct-syntax")
+  (include "struct-syntax")
 
-(define-syntax assertp
-  (syntax-rules ()
-    ((assertp pred x)
-     (assert (pred x) "invalid type"))))
+  (define-syntax assertp
+    (syntax-rules ()
+      ((assertp pred x)
+       (assert (pred x) "invalid type"))))
 
-;; Selection language
+  ;; Selection language
 
-(define-struct tree-module   (functions))
+  (define-struct tree-module   (functions))
 
-(define-struct tree-function (name args entry module))
+  (define-struct tree-function (name args entry module))
 
-(define-struct tree-block    (name head tail pred succ function))
+  (define-struct tree-block    (name head tail pred succ function))
 
-(define-struct tree-instr    (op mode in1 in2 in3 next prev block attrs))
+  (define-struct tree-instr    (op mode in1 in2 in3 next prev block attrs))
 
-(define-struct tree-temp     (name))
+  (define-struct tree-temp     (name))
 
-(define-struct tree-label    (name))
+  (define-struct tree-label    (name))
 
-(define-struct tree-constant (size value))
+  (define-struct tree-constant (size value))
 
-(define-struct tree-data     (size name))
+  (define-struct tree-data     (size name))
 
 
 (define *tree-tag*
@@ -68,21 +69,21 @@
      (else
       (let ((const (tree-make-constant type value)))
         (set! *tree-i8-pool* (cons (cons value const) *tree-i8-pool*))
-        const))))     
+        const))))
    ((eq? type 'i16)
     (cond
      ((assq value *tree-i16-pool*) => cdr)
      (else
       (let ((const (tree-make-constant type value)))
         (set! *tree-i16-pool* (cons (cons value const) *tree-i16-pool*))
-        const))))          
+        const))))
    ((eq? type 'i32)
     (cond
      ((assq value *tree-i32-pool*) => cdr)
      (else
       (let ((const (tree-make-constant type value)))
         (set! *tree-i32-pool* (cons (cons value const) *tree-i32-pool*))
-        const))))          
+        const))))
    ((eq? type 'i64)
     (cond
      ((assq value *tree-i64-pool*) => cdr)
@@ -98,7 +99,7 @@
 (define (tree-temp-get name)
   (cond
     ((assq name *tree-temp-pool*) => cdr)
-     (else 
+     (else
       (let ((temp (tree-make-temp name)))
         (set! *tree-temp-pool* (cons (cons name temp) *tree-temp-pool*))
         temp))))
@@ -110,7 +111,7 @@
 (define (tree-label-get name)
   (cond
     ((assq name *tree-label-pool*) => cdr)
-     (else 
+     (else
       (let ((label (tree-make-label name)))
         (set! *tree-label-pool* (cons (cons name label) *tree-label-pool*))
         label))))
@@ -293,7 +294,7 @@
 (define (tree-function-add-arg! x arg)
    (assertp tree-function? x)
    (tree-function-args-set! x (cons arg (tree-function-args x))))
-  
+
 (define (tree-function-print x port)
 
   (define (format-arg-list args)
@@ -302,10 +303,10 @@
             (format "~a" (tree-instr-format arg)))
           args)
      " "))
-  
+
   (define (print-declaration name args port)
     (fprintf port "(~a (~a)\n" name (format-arg-list args)))
-  
+
   (define (print-body x port)
     (tree-for-each-block
      (lambda (block)
@@ -319,7 +320,7 @@
       (tree-function-args x)
       port)
     (print-body x port))
- 
+
 
 ;; block
 
@@ -333,7 +334,7 @@
     (tree-block-head-set! x stm)
     (tree-block-tail-set! x stm))
    (else
-    (tree-instr-next-set! (tree-block-tail x) stm) 
+    (tree-instr-next-set! (tree-block-tail x) stm)
     (tree-instr-prev-set! stm (tree-block-tail x))
     (tree-block-tail-set! x stm)))
   x)
@@ -370,7 +371,7 @@
     (tree-instr-format (tree-binop-left node))
     (tree-instr-format (tree-binop-right node))))
 
-  
+
 ;; call
 
 (define (tree-call-target x)
@@ -393,7 +394,7 @@
                   (tree-instr-format arg))
                   (tree-call-args node))
            " ")))
-          
+
 ;; ret
 
 (define (tree-ret-value x)
@@ -440,7 +441,7 @@
           (tree-instr-format (tree-store-value node))
           (tree-instr-format (tree-store-addr  node))))
 
-;; conditional branch 
+;; conditional branch
 
 (define (tree-brc-cond x)
   (tree-instr-in1 x))
@@ -466,7 +467,7 @@
           (tree-instr-format (tree-brc-labelx node))
           (tree-instr-format (tree-brc-labely node))))
 
-;; unconditional branch 
+;; unconditional branch
 
 (define (tree-br-label x)
   (tree-instr-in1 x))
@@ -547,7 +548,7 @@
   (let ((head (tree-block-head block)))
     (let walk ((x head))
       (cond
-       ((not (null? x)) 
+       ((not (null? x))
         (f x)
         (walk (tree-instr-next x)))))))
 
@@ -583,6 +584,3 @@
       ((assign)
        (tree-assign-format x))))
    (else (assert-not-reached))))
-
-
-

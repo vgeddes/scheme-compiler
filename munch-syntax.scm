@@ -17,10 +17,10 @@
           (%block      (r 'block))
           (%tree       (r 'tree))
           (%t1         (gensym 't))
-          (%mc-block-append           (r 'mc-block-append))
-          (%mc-context-allocate-vreg  (r 'mc-context-allocate-vreg))
-          (%mc-block-cxt              (r 'mc-block-cxt)))
- 
+          (%mblk-append           (r 'mblk-append))
+          (%mcxt-alloc-vreg  (r 'mcxt-alloc-vreg))
+          (%mblk-cxt              (r 'mblk-cxt)))
+
 
     (define renamed '())
     (define (rename name)
@@ -31,10 +31,10 @@
         (let ((x (gensym)))
           (set! renamed (cons (cons name x) renamed))
           x))))
-  
+
     ;; select-names
     ;;
-    ;; Find names (which are bound to nodes by 'match) which need to be expanded next by the maximal-munch algorithm 
+    ;; Find names (which are bound to nodes by 'match) which need to be expanded next by the maximal-munch algorithm
     ;;
     ;; (add (i32 x) op2)
     ;; => (op2)
@@ -51,10 +51,10 @@
     ;; compile-pattern
     ;;
     ;; Transform high-level patterns into low-level 'match patterns
-    ;; 
+    ;;
     ;;  (add (i32 x) op2)
     ;;  => ($ tree-instr 'add ('mode 'i32) (? i32? x) (? symbol? g67))
-    ;;  
+    ;;
     (define (compile-pattern pat)
       (define (walk pat)
       (match pat
@@ -116,7 +116,7 @@
 
         ))
     (walk pat))
- 
+
     (define (gen-bindings arch bindings)
       (let ((function-name  (string->symbol (format "munch-~s" arch))))
         (match bindings
@@ -144,13 +144,13 @@
                 (gen-bindings arch nodes-to-expand)
                 (cond
                   ;; bind the name 'out' to a gensym if this production requires a return value (in which case out != #f)
-                  ;; AND the user-specified return value is not already listed in nodes-to-expand. 
+                  ;; AND the user-specified return value is not already listed in nodes-to-expand.
                   ((and out (not (memq out nodes-to-expand)))
-                   `((,out (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) (,%gensym 't)))))
+                   `((,out (,%mcxt-alloc-vreg (,%mblk-cxt ,%block) (,%gensym 't)))))
                   (else '()))
                ;; bind temps to unique symbols (remembering not to bind 'out again if it is declared as a temp)
                (map (lambda (temp)
-                      `(,temp (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) (,%gensym 't))))
+                      `(,temp (,%mcxt-alloc-vreg (,%mblk-cxt ,%block) (,%gensym 't))))
                     (lset-difference eq? temps (list out))))))
 
         `(,pat-compiled
@@ -160,14 +160,14 @@
 
     (define (compile arch rule)
       (match rule
-        ((pat temp-cls out-cls (tmpl* ...)) 
+        ((pat temp-cls out-cls (tmpl* ...))
          (gen-code
             arch
             pat
-            (parse-temp-cls temp-cls)  
+            (parse-temp-cls temp-cls)
             (parse-out-cls  out-cls)
             tmpl*))))
-    
+
     (define (compile-rules arch rule*)
       (reverse
         (fold (lambda (rule x)
@@ -184,14 +184,13 @@
 ;;  `(,%define (,function-name ,%block ,%tree)
 ;;             (,%match ,%tree
 ;;               (($ tree-temp ,%t1)
-;;                (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) ,%t1))
+;;                (,%mcxt-allocate-vreg (,%mblk-cxt ,%block) ,%t1))
 ;;               ,@rule-compiled*
 ;;              (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern")))))
 
          `(,%define (,function-name ,%block ,%tree)
              (,%match ,%tree
                (($ tree-temp ,%t1)
-                (,%mc-context-allocate-vreg (,%mc-block-cxt ,%block) ,%t1))
+                (,%mcxt-alloc-vreg (,%mblk-cxt ,%block) ,%t1))
                ,@rule-compiled*
               (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern"))))))))))
-

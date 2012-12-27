@@ -1,4 +1,4 @@
-  
+
 (declare (unit arch-x86-64)
          (uses machine spec-x86-64 rules-x86-64 tree nodes))
 
@@ -7,199 +7,313 @@
 
 (include "arch-syntax")
 
-(define *tail-call-hregs-x86-64* '(r8 r9 r10 r11 r12 r13 r14 r15))
+(define *regs*  '(rax rbx rcx rdx rdi rsi r8 r9 r10 r11 r12 r13 r14 r15))
+
+;; Standard C calling convention
+(define *ccall*
+  '((args         (rdi rsi rdx rcx r8 r9))
+    (ret          rax)
+    (callee-save  (rbp rbx r12 r13 r14 r15))))
+
+;; Our calling convention (non-TCO)
+(define *scall*
+  '((args         (rdi rsi r8 r9 r10 r11 r12 r13 r14 r15))
+    (ret          rax)
+    (callee-save  ())))
+
+;; Our tail calling convention
+(define *tcall*
+  '((args         (rdi rsi r8 r9 r10 r11 r12 r13 r14 r15))
+    (ret          #f)
+    (callee-save  ())))
+
+(define (cc-args cc)
+  (match cc
+    ((('args args) _ _)
+     args)))
+
+(define (cc-ret cc)
+  (match cc
+    ((_ ('ret ret) _)
+     ret)))
+
+(define (cc-callee-save cc)
+  (match cc
+    ((_ _ ('callee-save x))
+     x)))
+
+
+
+(define (ces? hreg)
+  (and (memq hreg *callee-save*) #t))
+
+(define (crs? hreg)
+  (not ces? hreg))
 
 ;;
 ;; Arguments passed to a context are constrained to registers r8 ... r15.
-;; This could cause allocation conflicts between constrained vregs during register allocation. 
+;; Since we want to minimise the length of pre-colored live ranges, we move the args into temps.
 ;;
 ;; So we insert moves to copy each constrained arg into an unconstrained vreg, and add
 ;; hints so that the allocator can eliminate the move if possible
 ;;
-(define (make-context-x86-64 name params mod)
-  (let* ((cxt         (make-mc-context name '() '() '()))
-         (args        (map (lambda (param hint)
-                             (mc-context-allocate-vreg cxt param #f hint))
+
+(define (make-context name params mod)
+  (let* ((cxt         (make-mcxt name '() '() '()))
+         (tmp*        (map (lambda (param hint)
+                             (mcxt-alloc-vreg cxt param #f hint))
                            params
-                           *tail-call-hregs-x86-64*))
-         (args-fixed  (map (lambda (arg hreg)
-                             (mc-context-allocate-vreg cxt (gensym 't) hreg #f))
-                           args
-                           *tail-call-hregs-x86-64*))
-         (blk         (mc-make-block cxt name)))
+                           (cc-args *scall*)))
+         (arg*        (map (lambda (arg hreg)
+                             (mcxt-alloc-vreg cxt (gensym 't) hreg #f))
+                           params
+                           (cc-args *scall*)))
+         (blk         (mblk-make cxt name)))
 
-    ;; insert move from each arg-fixed into arg
-    (for-each (lambda (fixed arg)
+    (arch-emit-code x86-64 blk
+      (push.r (hreg rbp))
+      (mov.rr (hreg rsp) (hreg rbp)))
+
+    ;; insert move from each arg into a tmp
+    (for-each (lambda (arg tmp)
                 (arch-emit-code x86-64 blk
-                  (mov.rr fixed arg)))
-              args-fixed args)
+                  (mov.rr arg tmp)))
+              arg* tmp*)
 
-    (mc-context-start-set! cxt blk)
-    (mc-context-args-set!  cxt args-fixed)
-    (mc-module-contexts-set! mod (cons cxt (mc-module-contexts mod)))
+    (mcxt-strt-set! cxt blk)
+    (mcxt-args-set! cxt arg*)
+    (mmod-cxts-set! mod (cons cxt (mmod-cxts mod)))
     cxt))
+
+;; move temps back into callee save regs
 
 
 (define (operand-format-x86-64 op)
   (cond
-    ((mc-vreg? op)
-     (format "~s" (mc-vreg-hreg op)))
-    ((mc-imm? op)
-     (format "~s" (mc-imm-value op)))
-    ((mc-disp? op)
-     (format "~s" (mc-disp-value op)))
+    ((mvr? op)
+     (format "~s" (mvr-name op)))
+    ((mim? op)
+     (format "~s" (mim-value op)))
+    ((mdi? op)
+     (format "~s" (mdi-value op)))
     (else (assert-not-reached))))
 
 (define (vregs-read-x86-64 instr)
-  (let* ((ops           (mc-instr-ops instr))
-        (reads         ((mc-spec-reads (mc-instr-spec instr)) ops)))
+  (let* ((ops           (minst-ops instr))
+         (reads         ((mspec-reads (minst-spec instr)) ops)))
   (cond
     ((x86-64.xor.rr? instr)
      (cond
-       ((mc-vreg-equal? (first ops) (second ops))
+       ((mvr-equal? (first ops) (second ops))
         (list))
        (else reads)))
     (else reads))))
 
 (define (vregs-written-x86-64 instr)
-  (let* ((ops  (mc-instr-ops instr))
-         (writes ((mc-spec-writes (mc-instr-spec instr)) ops)))
+  (let* ((ops  (minst-ops instr))
+         (writes ((mspec-writes (minst-spec instr)) ops)))
      writes))
 
 
 ;; Generate x86-64 code for the 'return' instruction
 ;;
-(define (emit-return-x86-64 block value)
+(define (emit-return-x86-64 blk value)
+
   ;; move return value into %rax
   (cond
     ((tree-constant? value)
      (case (tree-constant-size value)
        ((i32)
-        (arch-emit-code x86-64 block
+        (arch-emit-code x86-64 blk
           (mov.i64r  (imm i64 0) (hreg rax))
           (mov.i32r  (imm i32 (tree-constant-value value)) (hreg rax))))
        ((i64)
-        (arch-emit-code x86-64 block      
+        (arch-emit-code x86-64 blk
           (mov.i64r  (imm i64 (tree-constant-value value)) (hreg rax))))
        (else (assert-not-reached))))
     ((tree-temp? value)
-     (arch-emit-code x86-64 block
+     (arch-emit-code x86-64 blk
        (mov.rr (vreg (tree-temp-name value)) (hreg rax)))))
   ;; stack frame management
-  (arch-emit-code x86-64 block
+  (arch-emit-code x86-64 blk
     (mov.rr (hreg rbp) (hreg rsp))
     (pop.r  (hreg rbp))
     (retnear)))
 
 
+
+
+
 ;;
-;; Lower tail calls to x86-64 code 
+;; Generates code for moving args into the arg-passing hregs defined by the given calling convention
 ;;
-;; * Only immediates virtual registers are allowed as arguments (i.e. no memory references).
-;; * Can only jump to labels or values contained in virtual registers
+;; returns the list of hregs used to pass params
+;;
+(define (shuf-args blk args dst cc)
+  (let* ((pair    (let f ((arg*   args)
+                          (hreg*  (cc-args cc))
+                          (x     '())
+                          (y     '()))
+                    (match hreg*
+                      (() (cons
+                           (map (lambda (hreg)
+                                  (mcxt-alloc-vreg (mblk-cxt blk) (gensym 't) hreg #f))
+                                (reverse x))
+                           (map (lambda (hreg)
+                                  (mcxt-alloc-vreg (mblk-cxt blk) (gensym 't) hreg #f))
+                                (lset-difference eq? *regs* (list 'rax) x (cc-callee-save cc)))))
+                      ((hreg . hreg*)
+                       (if (not (null? arg*))
+                           (f (cdr arg*) hreg* (cons (car arg*) x) y)
+                           (f arg*       hreg* x                   (cons hreg y)))))))
+         (hargs   (car pair))
+         (clobs   (cdr pair))
+         (union   (lset-union (lambda (x y)
+                                (eq? (mvr-hreg x) (mvr-hreg y)))
+                                 hargs dst clobs)))
+
+    ;; Select instructions for each move
+    (for-each
+     (lambda (reg arg)
+       (cond
+        ((mvr? arg)
+         (arch-emit-code x86-64 blk
+           (mov.rr arg reg)))
+        ((mim? arg)
+         (arch-emit-code x86-64 blk
+           (mov.i64r arg reg)))
+        (else (print arg) (assert-not-reached))))
+     hargs args)
+
+    union))
+
+
+;;
+;; Lower conventional C ABI calls to x86-64
 ;;
 ;; We move each positional arg to a constrained temp (i.e pre-colored to a hardware register)
-
-;; Standard argument passing registers (in order): r8 r9 r10 r11 r12 r13 14 r15
+;;
+;; Standard argument passing registers (in order): rdi rsi rdx rcx r8 r9
 ;;
 ;; We create a selection tree for each move so we can produce efficient code for moving the arg
 ;; to the constrained temp. This is mostly useful for immediate -> register moves.
 ;;
 ;; Example:
-;; 
-;; lower (call fib45 (t5 t67 3 t34)) => 
+;;
+;; lower (call fib45 (t5 t67 3 t34)) =>
 ;;
 ;;    mov  r8,  t5
 ;;    mov  r9,  t67
 ;;    mov  r10, 3
 ;;    mov  r11, t34
-;;    jmp  [rip + fib45]  # relative jmp to fib45.
+;;    call  [rip + fib45]  # relative jmp to fib45.
+;;    mov  t0 eax
 ;;
 ;; For liveness analysis and register allocation purposes, we hint that 'jmp' implicitly uses r8, r9, r10 and r11
 ;;
-(define (emit-tail-call-x86-64 blk tgt args)
 
-  (define (lower-target tgt)
-    (cond
-      ((tree-label? tgt)
-       (mc-make-disp (tree-label-name tgt)))
-      ((tree-temp? tgt)
-       (mc-context-allocate-vreg (mc-block-cxt blk) (tree-temp-name tgt)))
-      (else (assert-not-reached))))
-
-  (let* ((hregs      '(r8 r9 r10 r11 r12 r13 r14 r15))
-         (hregs-used  (let f ((arg* args) (hregs hregs) (x '()))
-                            (match arg*
-                              (() (map (lambda (hreg) (mc-context-allocate-vreg (mc-block-cxt blk) hreg hreg #f)) (reverse x)))
-                              ((arg . arg*)
-                               (f arg* (cdr hregs) (cons (car hregs) x))))))
-         (moves*      (map (lambda (hreg arg)
-                             (tree-make-assign hreg arg))
-                           hregs-used
-                           args)))
-    
-    ;; Select instructions for each move
-    (for-each (lambda (reg arg)
-                (cond
-                  ((tree-temp? arg)
-                   (arch-emit-code x86-64 blk
-                     (mov.rr (vreg (tree-temp-name arg)) reg)))
-                  ((tree-constant? arg)
-                   (arch-emit-code x86-64 blk
-                     (mov.i64r (imm i64 (tree-constant-value arg)) reg)))
+(define (emit-ccall-x86-64 blk tgt args dst)
+  (let* ((margs  (map (lambda (arg)
+                        (cond
+                         ((tree-temp? arg)
+                          (mcxt-alloc-vreg (mblk-cxt blk) (tree-temp-name arg)))
+                         ((tree-constant? arg)
+                          (mim-make (tree-constant-size arg) (tree-constant-value arg)))
+                         (else (assert-not-reached))))
+                      args))
+         (mdst   (if dst (mcxt-alloc-vreg (mblk-cxt blk) dst #f #f) #f))
+         (mtgt   (cond
+                  ((tree-label? tgt)
+                   (mdi-make (tree-label-name tgt)))
+                  ((tree-temp? tgt)
+                   (mcxt-alloc-vreg (mblk-cxt blk) (tree-temp-name tgt)))
                   (else (assert-not-reached))))
-              hregs-used args)
-
-    ;; Choose instruction for the actual tail call
+        (rax    (mcxt-alloc-vreg (mblk-cxt blk) (gensym 't) 'rax #f))
+        (clobs  (shuf-args blk margs (if mdst (list rax) '()) *ccall*)))
     (cond
-      ((tree-label? tgt)
-       (x86-64.jmp.d blk hregs-used (lower-target tgt)))      
-      ((tree-temp? tgt)
-       (x86-64.jmp.r blk hregs-used (lower-target tgt)))
-      (else (assert-not-reached)))))
+     ((tree-label? tgt)
+      (x86-64.call.d blk clobs mtgt))
+     ((tree-temp? tgt)
+      (x86-64.call.r blk clobs mtgt))
+     (else (assert-not-reached)))
+    (if mdst
+        (arch-emit-code x86-64 blk
+                        (mov.rr rax mdst)))))
+
+(define (emit-scall-x86-64 blk tgt args dst)
+  (let* ((margs  (map (lambda (arg)
+                        (cond
+                         ((tree-temp? arg)
+                          (mcxt-alloc-vreg (mblk-cxt blk) (tree-temp-name arg)))
+                         ((tree-constant? arg)
+                          (mim-make (tree-constant-size arg) (tree-constant-value arg)))
+                         (else (assert-not-reached))))
+                      args))
+         (mdst   (mcxt-alloc-vreg (mblk-cxt blk) dst #f #f))
+         (mtgt   (cond
+                  ((tree-label? tgt)
+                   (mdi-make (tree-label-name tgt)))
+                  ((tree-temp? tgt)
+                   (mcxt-alloc-vreg (mblk-cxt blk) (tree-temp-name tgt)))
+                  (else (assert-not-reached))))
+        (rax    (mcxt-alloc-vreg (mblk-cxt blk) (gensym 't) 'rax #f))
+        (clobs  (shuf-args blk margs (list rax) *scall*)))
+    ;; emit call
+    (cond
+     ((tree-label? tgt)
+      (x86-64.call.d blk clobs mtgt))
+     ((tree-temp? tgt)
+      (x86-64.call.r blk clobs mtgt))
+     (else (assert-not-reached)))
+    ;; Move rax to dst
+    (arch-emit-code x86-64 blk
+                    (mov.rr rax mdst))))
 
 (define (generate-bridge-context-x86-64 mod)
-  (let* ((cxt  (make-mc-context '__scheme_exec '() '() '()))
-         (ptr  (mc-context-allocate-vreg cxt (gensym 't) 'rsi #f)))
+  (let* ((cxt  (make-mcxt '__scheme_exec '() '() '()))
+         (ptr  (mcxt-alloc-vreg cxt (gensym 't) 'rsi #f)))
 
+    (mcxt-args-set! cxt (list ptr))
+    (mcxt-strt-set! cxt (mblk-make cxt '__scheme_exec))
 
-    (mc-context-args-set! cxt (list ptr))
-    (mc-context-start-set! cxt (mc-make-block cxt '__scheme_exec))
-    
-    (arch-emit-code x86-64 (mc-context-start cxt)
+    (arch-emit-code x86-64 (mcxt-strt cxt)
       ;; prologue
       (push.r  (hreg rbp))
       (mov.rr  (hreg rsp) (hreg rbp))
-      ;; set heap_ptr
-      (mov.rd ptr (disp 'heap_ptr))
       ;; jump to __begin
       (jmp.d   (disp 'begin)))
 
-    (mc-module-contexts-set! mod (cons cxt (mc-module-contexts mod)))
+    (mmod-cxts-set! mod (cons cxt (mmod-cxts mod)))
 
     cxt))
 
 ;; Selects x86-64 instructions for a tree node
 ;;
-(define (emit-statement-x86-64 block tree)
-  (match tree
+(define (emit-stm block stm)
+  (match stm
     (($ tree-instr 'return _ value)
      (emit-return-x86-64 block value))
-    (($ tree-instr 'call _ target args)
-     (case (tree-instr-attr tree 'callconv)
-       ((tail)
-         (emit-tail-call-x86-64 block target args))
-       ((cdecl) '())
-       (else (error 'munch-statement "should not reach here"))))
-    (($ tree-instr 'assign _ (? symbol?) ($ tree-instr 'call) _ _ _ _ attrs) '())
-    (_ (munch-x86-64 block tree))))
+    (($ tree-instr 'call _ tgt args)
+     (let ((conv (tree-instr-attr stm 'callconv)))
+       (case conv
+         ((c)
+          (emit-ccall-x86-64 block tgt args #f))
+         (else '()))))
+    (($ tree-instr 'assign _ dst ($ tree-instr 'call _ tgt args))
+     (let ((conv (tree-instr-attr (tree-assign-value stm) 'callconv)))
+       (case conv
+         ((c)
+          (emit-ccall-x86-64 block tgt args dst))
+         ((s)
+          (emit-scall-x86-64 block tgt args dst))
+         (else '()))))
+    (_ (munch-x86-64 block stm))))
 
 (define <arch-x86-64>
         (make-arch-descriptor
-           make-context-x86-64
+           make-context
            operand-format-x86-64
            vregs-read-x86-64
            vregs-written-x86-64
            generate-bridge-context-x86-64
-           emit-statement-x86-64))
-
+           emit-stm))

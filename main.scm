@@ -30,6 +30,8 @@
     cps-convert
     closure-convert
     tree-convert
+    select-instructions
+    alloc-regs
    ))
 
 (define (compile pipeline source)
@@ -49,11 +51,11 @@
 
         (cond
           ((hil-mod? output)
-           (pretty-print (build-sexp output)))
+           (pretty-print (hil-format-sexp output)))
           ((list? output)
            (pretty-print output))
-          ((mc-module? output)
-           (mc-module-print output (current-output-port)))
+          ((mmod? output)
+           (mmod-print output (current-output-port)))
           ((tree-module? output)
            (tree-module-print output (current-output-port)))
           (else

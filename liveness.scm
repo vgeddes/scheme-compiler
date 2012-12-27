@@ -21,7 +21,7 @@
     (error 'assert-not-reached)))
 
 (define (format-range range)
-  `(range ,(mc-vreg-name (range-vreg range))
+  `(range ,(mvr-name (range-vreg range))
           ,(range-hreg  range)
           ,(range-pref  range)
           ,(range-start range)
@@ -39,26 +39,26 @@
 ;;
 ;; The graph abstracts away from basic blocks. Each node represents an individual instruction.
 ;; Multiple outgoing edges on a node indicate a branching decision.
-;;  
+;;
 (define (build-graph cxt)
 
   (define (walk block counter)
     (match block
-      (($ mc-block name head tail (succ* ...) cxt)
+      (($ mblk name head tail (succ* ...) cxt)
        (let* ((nodes (let f ((instr head) (nodes '()))
                        (cond
                          ((null? instr) (reverse nodes))
                          (else
                           (let ((number (counter)))
-                            (mc-instr-index-set! instr number)
-                            (f (mc-instr-next instr)
+                            (minst-idx-set! instr number)
+                            (f (minst-nxt instr)
                                (cons (make-node number instr '() '() '() '() '() '() '()) nodes)))))))
               (head (car nodes))
               (tail (car (reverse nodes)))
               (succ (map (lambda (succ)
                            (walk succ counter))
                      succ*)))
-         
+
           ;; set next/prev pointers
          (let f ((cur (car nodes)) (node* (cdr nodes)))
            (match node*
@@ -76,7 +76,7 @@
                    succ)
          head))))
 
-     (walk (mc-context-start cxt) (make-count-generator)))
+     (walk (mcxt-strt cxt) (make-count-generator)))
 
 ;;
 ;; Sort the graph nodes into reverse post-order
@@ -96,11 +96,11 @@
 
 ;; Get all vregs defined at the given node
 (define (def-at node)
-  (mc-instr-vregs-written (node-value node)))
+  (minst-vregs-written (node-value node)))
 
 ;; Get all vregs used at the given node
 (define (use-at node)
-  (append (mc-instr-vregs-read (node-value node)) (mc-instr-implicit-uses (node-value node))))
+  (append (minst-vregs-read (node-value node)) (minst-iu (node-value node))))
 
 ;; Perform iterative liveness analysis on the graph
 ;;
@@ -110,7 +110,7 @@
 ;;   in:  Set of vregs that are live just before this node
 ;;   out: Set of vregs that are live just after this node
 ;;
-;; The analysis takes place on a reverse pre-ordering of the graph nodes. 
+;; The analysis takes place on a reverse pre-ordering of the graph nodes.
 ;; (i.e from the last node to the first node)
 ;;
 (define (analyze-liveness graph)
@@ -132,9 +132,9 @@
                 (node-succ node)))
         ;; node[i].in = node[i].use UNION (node[i].out MINUS node[i].def)
         (node-in-set! node
-          (lset-union mc-vreg-equal?
+          (lset-union mvr-equal?
             (node-use node)
-            (lset-difference mc-vreg-equal?
+            (lset-difference mvr-equal?
               (node-out node)
               (node-def node)))))
        node*)
@@ -142,7 +142,7 @@
    (for-each
      (lambda (node)
        (node-live-set! node
-         (lset-union mc-vreg-equal? (node-in node) (node-def node))))
+         (lset-union mvr-equal? (node-in node) (node-def node))))
      node*)
    graph))
 
@@ -150,13 +150,13 @@
   (make-range vreg hreg pref start end))
 
 (define (range-fixed? r)
-  (and (mc-vreg-hreg (range-vreg r)) #t))
+  (and (mvr-hreg (range-vreg r)) #t))
 
 (define (range-pref r)
-  (mc-vreg-pref (range-vreg r)))
+  (mvr-pref (range-vreg r)))
 
 (define (range-fixed-hreg r)
-  (mc-vreg-hreg (range-vreg r)))
+  (mvr-hreg (range-vreg r)))
 
 ;; Determines whether live range r1 starts before r2
 ;;
@@ -174,20 +174,20 @@
   (cond
     ((or (<= (range-end r1) (range-start r2)) (<= (range-end r2) (range-start r1)))
      #f)
-    ;;   r1  0----5
-    ;;   r2     3--6
+    ;;   r1  0--5
+    ;;   r2     3-6
     ((and (>= (range-start r2) (range-start r1)) (<= (range-start r2) (range-end r1)))
      #t)
-    ;;   r1  0----5
+    ;;   r1  0--5
     ;;   r2   1-3
     ((and (<= (range-start r1) (range-start r2)) (>= (range-end r1) (range-end r2)))
      #t)
     ;;   r1    1-3
-    ;;   r2  0----5 
+    ;;   r2  0--5
     ((and (>= (range-start r1) (range-start r2)) (<= (range-start r1) (range-end r2)))
      #t)
-    ;;   r1    1--5
-    ;;   r2  0--3
+    ;;   r1    1-5
+    ;;   r2  0-3
     ((and (>= (range-start r1) (range-start r2)) (<= (range-start r1) (range-end r2)))
      #t)
     (else #f)))
@@ -203,15 +203,15 @@
   (define (update node)
     (for-each
       (lambda (vreg)
-        (let ((range (mc-vreg-data vreg))
+        (let ((range (mvr-data vreg))
               (index (node-index node)))
           (cond
             ((null? range)
-             (mc-vreg-data-set! vreg (range-make vreg (mc-vreg-hreg vreg) (mc-vreg-pref vreg) index index)))
+             (mvr-data-set! vreg (range-make vreg (mvr-hreg vreg) (mvr-pref vreg) index index)))
             (else
              (range-end-set! range index)))))
       (node-live node)))
- 
+
   (let walk ((node graph))
      (match node
        (() '())
@@ -224,12 +224,15 @@
   ;; make dummy ranges for unused variables
   (for-each (lambda (vreg)
               (cond
-                ((null? (mc-vreg-data vreg))
-                 (mc-vreg-data-set! vreg (range-make vreg (mc-vreg-hreg vreg) (mc-vreg-pref vreg) -1 -1)))))
-    (mc-context-args cxt))
+                ((null? (mvr-data vreg))
+                 (mvr-data-set! vreg (range-make vreg (mvr-hreg vreg) (mvr-pref vreg) -1 -1)))))
+    (mcxt-args cxt))
 
   ;; return all ranges
-  (map (lambda (vreg) (mc-vreg-data vreg)) (mc-context-vregs cxt)))
+  (map (lambda (vreg)
+         (pretty-print (list (mvr-name vreg) (mvr-hreg vreg) (mvr-data vreg)))
+         (mvr-data vreg))
+       (mcxt-vrgs cxt)))
 
 (define (pool-make hregs ranges)
   (let ((table  (make-hash-table eq? symbol-hash 24)))
@@ -271,18 +274,20 @@
 ;; Allocate an hreg to a range, taking preferences into account
 ;;
 (define (hreg-alloc pool range)
-  (let ((pref (range-pref range)))
-    (cond
-      ((and pref (pool-member? pool pref) (can-alloc? pool range pref))
-       (pool-remove pool pref))
-      (else
-       (let loop ((hreg* (pool-hregs pool)))
-         (match hreg*
-           (() (assert-not-reached))
-           ((hreg . hreg*)
-            (if (can-alloc? pool range hreg)
-                (pool-remove pool hreg)
-                (loop hreg*)))))))))
+  (if (null? (pool-hregs pool))
+      #f
+      (let ((pref (range-pref range)))
+        (cond
+         ((and pref (pool-member? pool pref) (can-alloc? pool range pref))
+          (pool-remove pool pref))
+         (else
+          (let loop ((hreg* (pool-hregs pool)))
+            (match hreg*
+              (() #f)
+              ((hreg . hreg*)
+               (if (can-alloc? pool range hreg)
+                   (pool-remove pool hreg)
+                   (loop hreg*))))))))))
 
 ;;
 ;; Check whether the given range overlaps with any of a hreg's fixed ranges
@@ -319,7 +324,7 @@
 ;;
 ;; returns active ranges that have not yet expired
 ;;
-(define (expire-active pool cur active) 
+(define (expire-active pool cur active)
   (let loop ((ac* active))
     (match ac*
       (() '())
@@ -341,7 +346,7 @@
       (() (sort x range-starts-before?))
       ((range . range*)
        (cond
-         ((mc-vreg-equal? (range-vreg range) vreg)
+         ((mvr-equal? (range-vreg range) vreg)
           (f range* x))
          (else
           (range-hreg-set! range #f)
@@ -349,30 +354,31 @@
 
 ;; For our spilling heuristic, we select the longest range in active
 (define (select-range-to-spill active)
+  (print active)
   (car (sort active
          (lambda (r1 r2)
            (>= (- (range-end r1) (range-start r1)) (- (range-end r2) (range-start r2)))))))
 
 (define (add-spill spills index cxt instr vreg)
-  (let ((tmp (mc-context-allocate-vreg cxt (gensym 'g))))
-    ;; replace vreg use with another tmp, which will represent a scratch register. The vreg contents are now 
+  (let ((tmp (mcxt-alloc-vreg cxt (gensym 'g))))
+    ;; replace vreg use with another tmp, which will represent a scratch register. The vreg contents are now
     ;; passed between/from the stack and the scratch register
     ;; add spill info for the user
     (cond
-      ((and (mc-instr-is-read? instr vreg) (mc-instr-is-written? instr vreg))
-       (hash-table-set! spills (mc-instr-index instr) (list 'read-write instr index tmp)))
-      ((mc-instr-is-read? instr vreg)
-       (hash-table-set! spills (mc-instr-index instr) (list 'read instr index tmp)))
-      ((mc-instr-is-written? instr vreg)
-       (hash-table-set! spills (mc-instr-index instr) (list  'write instr index tmp)))
+      ((and (minst-is-read? instr vreg) (minst-is-written? instr vreg))
+       (hash-table-set! spills (minst-idx instr) (list 'read-write instr index tmp)))
+      ((minst-is-read? instr vreg)
+       (hash-table-set! spills (minst-idx instr) (list 'read instr index tmp)))
+      ((minst-is-written? instr vreg)
+       (hash-table-set! spills (minst-idx instr) (list  'write instr index tmp)))
       (else (assert-not-reached)))
     ;; replace vreg with tmp in instruction
-    (mc-instr-replace-vreg instr vreg tmp)
+    (minst-replace-vreg instr vreg tmp)
     ;; create a range for the scratch register
-    (make-range tmp #f #f (mc-instr-index instr) (mc-instr-index instr))))
+    (make-range tmp #f #f (minst-idx instr) (minst-index instr))))
 
 (define (spill spills index cxt ranges vreg)
-  (let loop ((user* (mc-vreg-users vreg)) (ranges ranges))
+  (let loop ((user* (mvr-usrs vreg)) (ranges ranges))
     (match user*
       (() (remove-range vreg ranges))
       ((user . user*)
@@ -388,16 +394,17 @@
         ;; handle current range
         ((cur . re*)
          (pretty-print (format-step pool cur ac re*))
-         (let ((ac (expire-active pool cur ac)))   
-           (cond
-             ;; Backtrack if a spill is required
-             ;; return (#f vreg) to indicate allocation failure
-             ((= (pool-count pool) 0)
-              (list #f (range-vreg (select-range-to-spill ac))))
-             (else      
-              ;; allocate a free register
-              (range-hreg-set! cur (hreg-alloc pool cur))
-              (loop re* (update-active ac cur)))))))))
+         (let ((ac (expire-active pool cur ac)))
+           ;; Backtrack if a spill is required
+           ;; return (#f vreg) to indicate allocation failure
+           (if (null? (pool-hregs pool))
+               (list #f (range-vreg (select-range-to-spill ac)))
+               (let ((hreg (hreg-alloc pool cur)))
+                 (if (not hreg)
+                     (list #f (range-vreg (select-range-to-spill ac)))
+                     (begin
+                       (range-hreg-set! cur hreg)
+                       (loop re* (update-active ac cur)))))))))))
 
 (define (scan cxt pool spills sp-index-gen ranges)
   ;; enter scanning loop
@@ -406,31 +413,31 @@
     (match (iterate pool ranges)
       ((#f vreg)
        ;; Restart the scan after handling the spill
-       (pretty-print (list 'spill (mc-vreg-name vreg)))
+       (pretty-print (list 'spill (mvr-name vreg)))
        (loop (spill spills (sp-index-gen) cxt ranges vreg)))
       ((#t)
        ;; update vregs to reflect the final register assignments
        (for-each (lambda (range)
-                (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
+                (mvr-hreg-set! (range-vreg range) (range-hreg range)))
               ranges)
       ))))
 
 (define (rewrite-spills cxt spills)
-  (let ((rbp (mc-context-allocate-vreg cxt 'rbp 'rbp #f)))
+  (let ((rbp (mcxt-alloc-vreg cxt 'rbp 'rbp #f)))
   (hash-table-for-each spills
     (lambda (k v)
        (match v
          (('read-write instr index vreg)
-          (mc-block-insert-before (mc-instr-block instr) instr 
-            (x86-64.mov.mdr #f '() rbp (mc-make-disp (* 8 index)) vreg))
-          (mc-block-insert-after (mc-instr-block instr) instr 
-            (x86-64.mov.rmd #f '() vreg rbp (make-mc-disp (* 8 index)))))
+          (mblk-insert-before (minst-block instr) instr
+            (x86-64.mov.mdr #f '() rbp (mdi-make (* 8 index)) vreg))
+          (mblk-insert-after (minst-block instr) instr
+            (x86-64.mov.rmd #f '() vreg rbp (make-mdi (* 8 index)))))
          (('read instr index vreg)
-          (mc-block-insert-before (mc-instr-block instr) instr 
-            (x86-64.mov.mdr #f '() rbp (make-mc-disp (* 8 index)) vreg)))
+          (mblk-insert-before (minst-block instr) instr
+            (x86-64.mov.mdr #f '() rbp (make-mdi (* 8 index)) vreg)))
          (('write instr index vreg)
-          (mc-block-insert-after (mc-instr-block instr) instr 
-            (x86-64.mov.rmd #f '() vreg rbp (make-mc-disp (* 8 index))))))))))
+          (mblk-insert-after (minst-block instr) instr
+            (x86-64.mov.rmd #f '() vreg rbp (make-mdi (* 8 index))))))))))
 
 (define (alloc-registers-pass cxt regs)
   (let* ((ranges    (compute-ranges cxt (build-graph cxt)))
@@ -443,25 +450,22 @@
 
     (rewrite-spills cxt spills)
     ;; print final assignments
-    ;;  (pretty-print  
+    ;;  (pretty-print
     ;;   `(assignments ,(map (lambda (vreg)
-    ;;                       `(,(mc-vreg-name vreg) ,(mc-vreg-hreg vreg)))
-    ;;                      (mc-context-vregs cxt))))))
+    ;;                       `(,(mvr-name vreg) ,(mvr-hreg vreg)))
+    ;;                      (mcxt-vrgs cxt))))))
 ))
 
 (define (alloc-regs mod)
-  (mc-context-for-each
+  (mcxt-for-each
     (lambda (cxt)
       (alloc-registers-pass cxt *regs*))
     mod)
   mod)
 
 (define (alloc-regs-test mod regs)
-  (mc-context-for-each
+  (mcxt-for-each
     (lambda (cxt)
       (alloc-registers-pass cxt regs))
     mod)
   mod)
-
-
-

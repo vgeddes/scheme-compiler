@@ -9,18 +9,18 @@
 ;; Instruction Definitions
 
 ;; operand flags
-;; 
+;;
 ;;
 
 ;; operand types
 ;; i8     8-bit immediate
 ;; i32    32-bit immediate
 ;; i64    64-bit immediate
-;; disp32 32-bit displacement 
+;; disp32 32-bit displacement
 ;; reg    64-bit register
 
 ;; operand flags
-;; in   register is read 
+;; in   register is read
 ;; out  register is modified
 
 (define-arch-registers x86-64 (rsp rbp rsi rdi rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15))
@@ -28,7 +28,7 @@
 (define-arch-instructions x86-64
 
  ;; ret
-  
+
   (retnear
    ()
    "ret")
@@ -65,6 +65,10 @@
    ((disp32))
    "call  [rip + $1]")
 
+  (call.r
+   ((reg in))
+   "call  [$1]")
+
   ;; add
 
   (add.rr
@@ -100,13 +104,13 @@
    "and   $2, $1")
 
   (and.i8r
-   ((i8) (reg in out)) 
+   ((i8) (reg in out))
    "and   $2, $1")
 
   (and.i32r
    ((i32) (reg in out))
    "and   $2, $1")
-  
+
   ;; or
 
   (ior.rr
@@ -142,7 +146,7 @@
   (shl.i8r
    ((i8) (reg in out))
    "shl   $2, $1")
-  
+
   ;; mov
 
   (mov.rr
@@ -230,7 +234,7 @@
   (jmp.d
    ((disp32))
    "jmp   [rip + $1]")
-  
+
   (jmp.r
    ((reg in))
    "jmp   $1")
@@ -277,4 +281,3 @@
   (jg.d
    ((disp32))
    "jg    [rip + $1]"))
-

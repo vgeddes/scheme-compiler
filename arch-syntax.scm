@@ -48,11 +48,11 @@
     (define (parse-operand-type type)
       (case type
         ((i8 i32 i64)
-          'mc-imm?)
+         'mim?)
         ((disp32)
-          'mc-disp?)
+          'mdi?)
         ((reg)
-          'mc-vreg?)
+          'mvr?)
         (else (assert-not-reached))))
 
     (define (is-in? flags)
@@ -81,7 +81,7 @@
                                   (cons `(list (,(accessor i) ops)) accessors)
                                  accessors)))
                (f flag* (+ i 1) accessors))))))
-       
+
 
     ;; Parse the operand spec string and return the following three lists
     ;;
@@ -90,8 +90,8 @@
     ;;  list of booleans indicating temps which are USED
     ;;  list of booleans indicating temps which are DEFINED
     ;;
-    ;;  For example 
-    ;;              ((i32) (r64 in))  =>  ((mc-imm? mc-vreg?)
+    ;;  For example
+    ;;              ((i32) (r64 in))  =>  ((mim? mvr?)
     ;;                                     (#f #t)
     ;;                                     (#f #f)
     ;;
@@ -100,7 +100,7 @@
        (let f ((os* operand-spec*) (i 0) (uses '()) (defs '()) (verifiers '()))
          (match os*
            (()
-            (list 
+            (list
               (reverse verifiers)
               (reverse uses)
               (reverse defs)))
@@ -132,12 +132,11 @@
              (%lambda                   (r 'lambda))
              (%let                      (r 'let))
              (%match                    (r 'match))
-             (%mc-make-instr            (r 'mc-make-instr))
-             (%make-mc-spec             (r 'make-mc-spec)))
-
+             (%minst-make               (r 'minst-make))
+             (%make-mspec               (r 'make-mspec)))
 
         `((,%define ,spec
-            (,%make-mc-spec
+            (,%make-mspec
              ',name
              ',fmt
              ',fmt-indices
@@ -146,12 +145,12 @@
               ,vregs-written))
           (,%define ,predicate
             (,%lambda (x)
-                (and (mc-instr? x) (eq? (mc-instr-spec x) ,spec))))
+                (and (minst? x) (eq? (minst-spec x) ,spec))))
           (,%define ,qualified-name
             (,%lambda operands
               (,%match operands
-                 ((block56 implicit-uses56 rest56* ...)
-                  (,%mc-make-instr block56 ,spec implicit-uses56 rest56*))
+                 ((block56 iu56 rest56* ...)
+                  (,%minst-make block56 ,spec iu56 rest56*))
                  (else (assert-not-reached))))))))
 
     (match e
@@ -173,27 +172,28 @@
       (('define-arch-registers arch (reg* ...))
        (let ((def (string->symbol (format "~s-registers" arch))))
          `(define ,def ',reg*))))))
-    
+
 
 ;; Convenience macro for building assembly code
 
+
 (define-syntax arch-emit-code
   (lambda (e r c)
-     
+
     (define (expand blk e)
-      (let ((%mc-context-allocate-vreg (r 'mc-context-allocate-vreg))
-            (%mc-block-cxt             (r 'mc-block-cxt))
-            (%make-mc-imm              (r 'make-mc-imm))
-            (%make-mc-disp             (r 'make-mc-disp)))
+      (let ((%mcxt-alloc-vreg (r 'mcxt-alloc-vreg))
+            (%mblk-cxt        (r 'mblk-cxt))
+            (%mim-make        (r 'mim-make))
+            (%mdi-make        (r 'mdi-make)))
       (match e
         (('vreg x)
-         `(,%mc-context-allocate-vreg (,%mc-block-cxt ,blk) ,x))
+         `(,%mcxt-alloc-vreg (,%mblk-cxt ,blk) ,x))
         (('hreg x)
-         `(,%mc-context-allocate-vreg (,%mc-block-cxt ,blk) ',x ',x #f))
+         `(,%mcxt-alloc-vreg (,%mblk-cxt ,blk) ',x ',x #f))
         (('imm size x)
-         `(,%make-mc-imm ',size ,x))
+         `(,%mim-make ',size ,x))
         (('disp x)
-         `(,%make-mc-disp ,x))    
+         `(,%mdi-make ,x))
         ((op* ...)
          (map (lambda (op) (expand blk op)) op*))
         (_ e))))
@@ -210,5 +210,3 @@
            ,@(map (lambda (instr)
                     (generate arch blk instr))
                   x*))))))
-
-
