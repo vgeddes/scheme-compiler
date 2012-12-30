@@ -1,14 +1,15 @@
-(module tree
+(declare (unit tree)
+         (uses helpers))
 
-  (import utils)
-  (import extra)
+(module tree *
 
+  (import scheme)
+  (import chicken)
   (import srfi-1)
   (import srfi-13)
   (import matchable)
   (import-for-syntax matchable)
-
-  (include "struct-syntax")
+  (import helpers)
 
   (define-syntax assertp
     (syntax-rules ()
@@ -17,570 +18,562 @@
 
   ;; Selection language
 
-  (define-struct tree-module   (functions))
+  (define-struct module   (functions))
 
-  (define-struct tree-function (name args entry module))
+  (define-struct function (name args entry module))
 
-  (define-struct tree-block    (name head tail pred succ function))
+  (define-struct block    (name head tail pred succ function))
 
-  (define-struct tree-instr    (op mode in1 in2 in3 next prev block attrs))
+  (define-struct instr    (op mode in1 in2 in3 next prev block attrs))
 
-  (define-struct tree-temp     (name))
+  (define-struct temp     (name))
 
-  (define-struct tree-label    (name))
+  (define-struct label    (name))
 
-  (define-struct tree-constant (size value))
+  (define-struct constant (size value))
 
-  (define-struct tree-data     (size name))
+  (define-struct data     (size name))
 
 
-(define *tree-tag*
-  '(function block instr temp label const))
+  (define *tag*
+    '(function block instr temp label const))
 
-(define *tree-type*
-  '(i8 i16 i32 i64))
+  (define *type*
+    '(i8 i16 i32 i64))
 
-(define tree-make-function make-tree-function)
-(define tree-make-block    make-tree-block)
-(define tree-make-temp     make-tree-temp)
-(define tree-make-label    make-tree-label)
-(define tree-make-constant make-tree-constant)
+  ;; constant pool
 
-;; constant pool
+  (define *i1-pool*  '())
+  (define *i8-pool*  '())
+  (define *i16-pool* '())
+  (define *i32-pool* '())
+  (define *i64-pool* '())
 
-(define *tree-i1-pool*  '())
-(define *tree-i8-pool*  '())
-(define *tree-i16-pool* '())
-(define *tree-i32-pool* '())
-(define *tree-i64-pool* '())
-
-(define (tree-constant-get type value)
-  (cond
-   ((eq? type 'i1)
+  (define (constant-get type value)
     (cond
-     ((assq value *tree-i1-pool*) => cdr)
-     (else
-      (let ((const (tree-make-constant type value)))
-        (set! *tree-i1-pool* (cons (cons value const) *tree-i1-pool*))
-        const))))
-   ((eq? type 'i8)
-    (cond
-     ((assq value *tree-i8-pool*) => cdr)
-     (else
-      (let ((const (tree-make-constant type value)))
-        (set! *tree-i8-pool* (cons (cons value const) *tree-i8-pool*))
-        const))))
-   ((eq? type 'i16)
-    (cond
-     ((assq value *tree-i16-pool*) => cdr)
-     (else
-      (let ((const (tree-make-constant type value)))
-        (set! *tree-i16-pool* (cons (cons value const) *tree-i16-pool*))
-        const))))
-   ((eq? type 'i32)
-    (cond
-     ((assq value *tree-i32-pool*) => cdr)
-     (else
-      (let ((const (tree-make-constant type value)))
-        (set! *tree-i32-pool* (cons (cons value const) *tree-i32-pool*))
-        const))))
-   ((eq? type 'i64)
-    (cond
-     ((assq value *tree-i64-pool*) => cdr)
-     (else
-      (let ((const (tree-make-constant type value)))
-        (set! *tree-i64-pool* (cons (cons value const) *tree-i64-pool*))
-        const))))))
+     ((eq? type 'i1)
+      (cond
+       ((assq value *i1-pool*) => cdr)
+       (else
+        (let ((const (make-constant type value)))
+          (set! *i1-pool* (cons (cons value const) *i1-pool*))
+          const))))
+     ((eq? type 'i8)
+      (cond
+       ((assq value *i8-pool*) => cdr)
+       (else
+        (let ((const (make-constant type value)))
+          (set! *i8-pool* (cons (cons value const) *i8-pool*))
+          const))))
+     ((eq? type 'i16)
+      (cond
+       ((assq value *i16-pool*) => cdr)
+       (else
+        (let ((const (make-constant type value)))
+          (set! *i16-pool* (cons (cons value const) *i16-pool*))
+          const))))
+     ((eq? type 'i32)
+      (cond
+       ((assq value *i32-pool*) => cdr)
+       (else
+        (let ((const (make-constant type value)))
+          (set! *i32-pool* (cons (cons value const) *i32-pool*))
+          const))))
+     ((eq? type 'i64)
+      (cond
+       ((assq value *i64-pool*) => cdr)
+       (else
+        (let ((const (make-constant type value)))
+          (set! *i64-pool* (cons (cons value const) *i64-pool*))
+          const))))))
 
-;; temp pool
+  ;; temp pool
 
-(define *tree-temp-pool* '())
+  (define *temp-pool* '())
 
-(define (tree-temp-get name)
-  (cond
-    ((assq name *tree-temp-pool*) => cdr)
+  (define (temp-get name)
+    (cond
+     ((assq name *temp-pool*) => cdr)
      (else
-      (let ((temp (tree-make-temp name)))
-        (set! *tree-temp-pool* (cons (cons name temp) *tree-temp-pool*))
+      (let ((temp (make-temp name)))
+        (set! *temp-pool* (cons (cons name temp) *temp-pool*))
         temp))))
 
-;; label pool
+  ;; label pool
 
-(define *tree-label-pool* '())
+  (define *label-pool* '())
 
-(define (tree-label-get name)
-  (cond
-    ((assq name *tree-label-pool*) => cdr)
+  (define (label-get name)
+    (cond
+     ((assq name *label-pool*) => cdr)
      (else
-      (let ((label (tree-make-label name)))
-        (set! *tree-label-pool* (cons (cons name label) *tree-label-pool*))
+      (let ((label (make-label name)))
+        (set! *label-pool* (cons (cons name label) *label-pool*))
         label))))
 
-;; base constructor
+  ;; base constructor
 
-(define-syntax tree-make-instr
-  (lambda (e r c)
-    (define defaults '(op mode in1 in2 in3 next prev block attrs))
-    (match e
-      (('tree-make-instr pair* ...)
-       `(make-tree-instr ,@(map (lambda (field)
-                                 (cond
-                                  ((assq field pair*)
-                                   => cadr)
-                                  (else ''())))
-                               defaults))))))
+  (define-syntax make-instr-internal
+    (lambda (e r c)
+      (define defaults '(op mode in1 in2 in3 next prev block attrs))
+      (match e
+        (('make-instr-internal pair* ...)
+         `(make-instr ,@(map (lambda (field)
+                               (cond
+                                ((assq field pair*)
+                                 => cadr)
+                                (else ''())))
+                             defaults))))))
 
-;; constructors for instructions
-
-
-(define (tree-make-assign name value)
-  (let ((node
-          (tree-make-instr
-           (op  'assign)
-           (in1  name)
-           (in2  value))))
-     node))
-
-(define (tree-make-binop op mode x y)
-  (let ((node
-          (tree-make-instr
-           (op    op)
-           (mode  mode)
-           (in1   x)
-           (in2   y))))
-     node))
-
-(define (tree-make-load mode addr)
-  (let ((node
-         (tree-make-instr
-          (op   'load)
-          (mode  mode)
-          (in1   addr))))
-    node))
-
-(define (tree-make-store mode value addr)
-  (let ((node
-         (tree-make-instr
-          (op   'store)
-          (mode  mode)
-          (in1   value)
-          (in2   addr))))
-    node))
-
-(define (tree-make-call callconv target args)
-  (let ((node
-         (tree-make-instr
-          (op    'call)
-          (in1    target)
-          (in2    args)
-          (attrs `((callconv . ,callconv))))))
-    node))
-
-(define (tree-make-return value)
-  (let ((node
-         (tree-make-instr
-          (op    'return)
-          (in1   value))))
-    node))
-
-(define (tree-make-br label)
-  (let ((node
-         (tree-make-instr
-          (op      'br)
-          (in1      label))))
-    node))
-
-(define (tree-make-brc cond labelx labely)
-  (let ((node
-         (tree-make-instr
-          (op      'brc)
-          (in1      cond)
-          (in2      labelx)
-          (in3      labely))))
-    node))
-
-(define (tree-make-cmp test x y)
-  (let ((node
-         (tree-make-instr
-          (op    'cmp)
-          (mode  'i64)
-          (in1    test)
-          (in2    x)
-          (in3    y))))
-    node))
+  ;; constructors for instructions
 
 
-;; node attributes
+  (define (make-assign name value)
+    (let ((node
+           (make-instr-internal
+            (op  'assign)
+            (in1  name)
+            (in2  value))))
+      node))
 
-(define (tree-instr-attr x attr)
-  (cond
-   ((assq attr (tree-instr-attrs x))
-    => cdr)
-   (else #f)))
+  (define (make-binop op mode x y)
+    (let ((node
+           (make-instr-internal
+            (op    op)
+            (mode  mode)
+            (in1   x)
+            (in2   y))))
+      node))
 
-(define (tree-instr-attr-set! x attr value)
-  (cond
-   ((assq attr (tree-instr-attrs x))
-    => (lambda (cell)
-         (set-cdr! cell value)))
-   (else
-    (tree-instr-attrs-set! x (cons (cons attr value) (tree-instr-attrs x))))))
+  (define (make-load mode addr)
+    (let ((node
+           (make-instr-internal
+            (op   'load)
+            (mode  mode)
+            (in1   addr))))
+      node))
 
-;; builders
+  (define (make-store mode value addr)
+    (let ((node
+           (make-instr-internal
+            (op   'store)
+            (mode  mode)
+            (in1   value)
+            (in2   addr))))
+      node))
 
+  (define (make-call callconv target args)
+    (let ((node
+           (make-instr-internal
+            (op    'call)
+            (in1    target)
+            (in2    args)
+            (attrs `((callconv . ,callconv))))))
+      node))
 
+  (define (make-return value)
+    (let ((node
+           (make-instr-internal
+            (op    'return)
+            (in1   value))))
+      node))
 
-(define tree-build-block      tree-make-block)
-(define tree-build-load       tree-make-load)
-(define tree-build-store      tree-make-store)
-(define tree-build-call       tree-make-call)
-(define tree-build-return     tree-make-return)
-(define tree-build-cmp        tree-make-cmp)
-(define tree-build-br         tree-make-br)
-(define tree-build-brc        tree-make-brc)
-(define tree-build-assign     tree-make-assign)
+  (define (make-br label)
+    (let ((node
+           (make-instr-internal
+            (op      'br)
+            (in1      label))))
+      node))
 
-(define (tree-build-add mode x y)
-  (tree-make-binop 'add mode x y))
+  (define (make-brc cond labelx labely)
+    (let ((node
+           (make-instr-internal
+            (op      'brc)
+            (in1      cond)
+            (in2      labelx)
+            (in3      labely))))
+      node))
 
-(define (tree-build-sub mode x y)
-  (tree-make-binop 'sub mode x y))
-
-(define (tree-build-mul mode x y)
-  (tree-make-binop 'mul mode x y))
-
-(define (tree-build-and mode x y)
-  (tree-make-binop 'and mode x y))
-
-(define (tree-build-ior mode x y)
-  (tree-make-binop 'ior mode x y))
-
-(define (tree-build-xor mode x y)
-  (tree-make-binop 'xor mode x y))
-
-(define (tree-build-shr mode x y)
-  (tree-make-binop 'shr mode x y))
-
-(define (tree-build-shl mode x y)
-  (tree-make-binop 'shl mode x y))
-
-
-;; OPS
-
-
-;; basic
-
-(define (tree-instr-print x port)
-  (fprintf port "    ~a\n" (tree-instr-format x)))
-
-;; module
-
-(define (tree-make-module)
-  (make-tree-module '()))
-
-(define (tree-module-add-function! mod fun)
-  (tree-module-functions-set! mod (cons fun (tree-module-functions mod))))
-
-(define (tree-module-print mod port)
-  (for-each
-   (lambda (fun)
-     (tree-function-print fun port)
-     (fprintf port "\n"))
-   (tree-module-functions mod)))
+  (define (make-cmp test x y)
+    (let ((node
+           (make-instr-internal
+            (op    'cmp)
+            (mode  'i64)
+            (in1    test)
+            (in2    x)
+            (in3    y))))
+      node))
 
 
-;; function
+  ;; node attributes
 
-(define (tree-function-add-arg! x arg)
-   (assertp tree-function? x)
-   (tree-function-args-set! x (cons arg (tree-function-args x))))
+  (define (instr-attr x attr)
+    (cond
+     ((assq attr (instr-attrs x))
+      => cdr)
+     (else #f)))
 
-(define (tree-function-print x port)
+  (define (instr-attr-set! x attr value)
+    (cond
+     ((assq attr (instr-attrs x))
+      => (lambda (cell)
+           (set-cdr! cell value)))
+     (else
+      (instr-attrs-set! x (cons (cons attr value) (instr-attrs x))))))
 
-  (define (format-arg-list args)
-    (string-join
-     (map (lambda (arg)
-            (format "~a" (tree-instr-format arg)))
-          args)
-     " "))
+  ;; builders
 
-  (define (print-declaration name args port)
-    (fprintf port "(~a (~a)\n" name (format-arg-list args)))
+  (define build-block      make-block)
+  (define build-load       make-load)
+  (define build-store      make-store)
+  (define build-call       make-call)
+  (define build-return     make-return)
+  (define build-cmp        make-cmp)
+  (define build-br         make-br)
+  (define build-brc        make-brc)
+  (define build-assign     make-assign)
 
-  (define (print-body x port)
-    (tree-for-each-block
-     (lambda (block)
-       (tree-block-print block port))
-     x)
-         (fprintf port ")"))
+  (define (build-add mode x y)
+    (make-binop 'add mode x y))
+
+  (define (build-sub mode x y)
+    (make-binop 'sub mode x y))
+
+  (define (build-mul mode x y)
+    (make-binop 'mul mode x y))
+
+  (define (build-and mode x y)
+    (make-binop 'and mode x y))
+
+  (define (build-ior mode x y)
+    (make-binop 'ior mode x y))
+
+  (define (build-xor mode x y)
+    (make-binop 'xor mode x y))
+
+  (define (build-shr mode x y)
+    (make-binop 'shr mode x y))
+
+  (define (build-shl mode x y)
+    (make-binop 'shl mode x y))
+
+
+  ;; OPS
+
+
+  ;; basic
+
+  (define (instr-print x port)
+    (fprintf port "    ~a\n" (instr-format x)))
+
+  ;; module
+
+  (define (module-add-function! mod fun)
+    (module-functions-set! mod (cons fun (module-functions mod))))
+
+  (define (module-print mod port)
+    (for-each
+     (lambda (fun)
+       (function-print fun port)
+       (fprintf port "\n"))
+     (module-functions mod)))
+
+
+  ;; function
+
+  (define (function-add-arg! x arg)
+    (assertp function? x)
+    (function-args-set! x (cons arg (function-args x))))
+
+  (define (function-print x port)
+
+    (define (format-arg-list args)
+      (string-join
+       (map (lambda (arg)
+              (format "~a" (instr-format arg)))
+            args)
+       " "))
+
+    (define (print-declaration name args port)
+      (fprintf port "(~a (~a)\n" name (format-arg-list args)))
+
+    (define (print-body x port)
+      (for-each-block
+       (lambda (block)
+         (block-print block port))
+       x)
+      (fprintf port ")"))
 
 
     (print-declaration
-      (tree-function-name x)
-      (tree-function-args x)
-      port)
+     (function-name x)
+     (function-args x)
+     port)
     (print-body x port))
 
 
-;; block
+  ;; block
 
-(define (tree-block-add-succ! x block)
-   (assertp tree-block? x)
-   (tree-block-succ-set! x (cons block (tree-block-succ x))))
+  (define (block-add-succ! x block)
+    (assertp block? x)
+    (block-succ-set! x (cons block (block-succ x))))
 
-(define (tree-block-add-statement! x stm)
-  (cond
-   ((and (null? (tree-block-head x)) (null? (tree-block-tail x)))
-    (tree-block-head-set! x stm)
-    (tree-block-tail-set! x stm))
-   (else
-    (tree-instr-next-set! (tree-block-tail x) stm)
-    (tree-instr-prev-set! stm (tree-block-tail x))
-    (tree-block-tail-set! x stm)))
-  x)
+  (define (block-add-statement! x stm)
+    (cond
+     ((and (null? (block-head x)) (null? (block-tail x)))
+      (block-head-set! x stm)
+      (block-tail-set! x stm))
+     (else
+      (instr-next-set! (block-tail x) stm)
+      (instr-prev-set! stm (block-tail x))
+      (block-tail-set! x stm)))
+    x)
 
-(define (tree-block-print x port)
-  (fprintf port "  (~a\n" (tree-block-name x))
-  (tree-for-each-statement
-   (lambda (instr)
-     (tree-instr-print instr port))
-   x))
+  (define (block-print x port)
+    (fprintf port "  (~a\n" (block-name x))
+    (for-each-statement
+     (lambda (instr)
+       (instr-print instr port))
+     x))
 
-;; binops
+  ;; binops
 
-(define (tree-binop-left x)
-  (assertp tree-instr? x)
-  (tree-instr-in1 x))
+  (define (binop-left x)
+    (assertp instr? x)
+    (instr-in1 x))
 
-(define (tree-binop-left-set! x v)
-  (assertp tree-instr? x)
-  (tree-instr-in1-set! x v))
+  (define (binop-left-set! x v)
+    (assertp instr? x)
+    (instr-in1-set! x v))
 
-(define (tree-binop-right x)
-  (assertp tree-instr? x)
-  (tree-instr-in2 x))
+  (define (binop-right x)
+    (assertp instr? x)
+    (instr-in2 x))
 
-(define (tree-binop-right-set! x v)
-  (assertp tree-instr? x)
-  (tree-instr-in2-set! x v))
+  (define (binop-right-set! x v)
+    (assertp instr? x)
+    (instr-in2-set! x v))
 
-(define (tree-binop-format node)
-  (format "(~a ~a ~a ~a)"
-    (tree-instr-op node)
-    (tree-instr-mode node)
-    (tree-instr-format (tree-binop-left node))
-    (tree-instr-format (tree-binop-right node))))
+  (define (binop-format node)
+    (format "(~a ~a ~a ~a)"
+            (instr-op node)
+            (instr-mode node)
+            (instr-format (binop-left node))
+            (instr-format (binop-right node))))
 
 
-;; call
+  ;; call
 
-(define (tree-call-target x)
-  (tree-instr-in1 x))
+  (define (call-target x)
+    (instr-in1 x))
 
-(define (tree-call-target-set! x v)
-  (tree-instr-in1-set! x v))
+  (define (call-target-set! x v)
+    (instr-in1-set! x v))
 
-(define (tree-call-args x)
-  (tree-instr-in2 x))
+  (define (call-args x)
+    (instr-in2 x))
 
-(define (tree-call-args-set! x v)
-  (tree-instr-in2 x v))
+  (define (call-args-set! x v)
+    (instr-in2 x v))
 
-(define (tree-call-format node)
-  (sprintf "(call ~a (~a))"
-          (tree-instr-format (tree-call-target node))
-          (string-join
-            (map (lambda (arg)
-                  (tree-instr-format arg))
-                  (tree-call-args node))
-           " ")))
+  (define (call-format node)
+    (sprintf "(call ~a (~a))"
+             (instr-format (call-target node))
+             (string-join
+              (map (lambda (arg)
+                     (instr-format arg))
+                   (call-args node))
+              " ")))
 
-;; ret
+  ;; ret
 
-(define (tree-ret-value x)
-  (tree-instr-in1 x))
+  (define (ret-value x)
+    (instr-in1 x))
 
-(define (tree-ret-value-set! x)
-  (tree-instr-in1 x))
+  (define (ret-value-set! x)
+    (instr-in1 x))
 
-(define (tree-ret-format node)
-  (format "(ret ~a)"
-          (tree-instr-format (tree-ret-value node))))
+  (define (ret-format node)
+    (format "(ret ~a)"
+            (instr-format (ret-value node))))
 
-;; load
+  ;; load
 
-(define (tree-load-addr x)
-  (tree-instr-in1 x))
+  (define (load-addr x)
+    (instr-in1 x))
 
-(define (tree-load-addr-set! x v)
-  (tree-instr-in1-set! x v))
+  (define (load-addr-set! x v)
+    (instr-in1-set! x v))
 
 
-(define (tree-load-format node)
-  (format "(load ~a ~a)"
-          (tree-instr-mode node)
-          (tree-instr-format (tree-load-addr node))))
+  (define (load-format node)
+    (format "(load ~a ~a)"
+            (instr-mode node)
+            (instr-format (load-addr node))))
 
-;; store
+  ;; store
 
-(define (tree-store-value x)
-  (tree-instr-in1 x))
+  (define (store-value x)
+    (instr-in1 x))
 
-(define (tree-store-value-set! x v)
-  (tree-instr-in1-set! x v))
+  (define (store-value-set! x v)
+    (instr-in1-set! x v))
 
-(define (tree-store-addr x)
-  (tree-instr-in2 x))
+  (define (store-addr x)
+    (instr-in2 x))
 
-(define (tree-store-addr-set! x v)
-  (tree-instr-in2 x v))
+  (define (store-addr-set! x v)
+    (instr-in2 x v))
 
-(define (tree-store-format node)
-  (format "(store ~a ~a ~a)"
-          (tree-instr-mode node)
-          (tree-instr-format (tree-store-value node))
-          (tree-instr-format (tree-store-addr  node))))
+  (define (store-format node)
+    (format "(store ~a ~a ~a)"
+            (instr-mode node)
+            (instr-format (store-value node))
+            (instr-format (store-addr  node))))
 
-;; conditional branch
+  ;; conditional branch
 
-(define (tree-brc-cond x)
-  (tree-instr-in1 x))
+  (define (brc-cond x)
+    (instr-in1 x))
 
-(define (tree-brc-cond-set! x v)
-  (tree-instr-in1-set! x v))
+  (define (brc-cond-set! x v)
+    (instr-in1-set! x v))
 
-(define (tree-brc-labelx x)
-  (tree-instr-in2 x))
+  (define (brc-labelx x)
+    (instr-in2 x))
 
-(define (tree-brc-labelx-set! x v)
-  (tree-instr-in2-set! x v))
+  (define (brc-labelx-set! x v)
+    (instr-in2-set! x v))
 
-(define (tree-brc-labely x)
-  (tree-instr-in3 x))
+  (define (brc-labely x)
+    (instr-in3 x))
 
-(define (tree-brc-labely-set! x v)
-  (tree-instr-in3-set! x v))
+  (define (brc-labely-set! x v)
+    (instr-in3-set! x v))
 
-(define (tree-brc-format node)
-  (format "(brc ~a ~a ~a)"
-          (tree-instr-format (tree-brc-cond node))
-          (tree-instr-format (tree-brc-labelx node))
-          (tree-instr-format (tree-brc-labely node))))
+  (define (brc-format node)
+    (format "(brc ~a ~a ~a)"
+            (instr-format (brc-cond node))
+            (instr-format (brc-labelx node))
+            (instr-format (brc-labely node))))
 
-;; unconditional branch
+  ;; unconditional branch
 
-(define (tree-br-label x)
-  (tree-instr-in1 x))
+  (define (br-label x)
+    (instr-in1 x))
 
-(define (tree-br-label-set! x v)
-  (tree-instr-in1-set! x v))
+  (define (br-label-set! x v)
+    (instr-in1-set! x v))
 
-(define (tree-br-format node)
-  (format "(br ~a)"
-          (tree-instr-format (tree-br-label x))))
+  (define (br-format node)
+    (format "(br ~a)"
+            (instr-format (br-label node))))
 
-;; cmp
-
-(define (tree-cmp-test x)
-  (tree-instr-in1 x))
-
-(define (tree-cmp-test-set! x test)
-  (tree-instr-in1-set! x test))
-
-(define (tree-cmp-x x)
-  (tree-instr-in2 x))
-
-(define (tree-cmp-x-set! x v)
-  (tree-instr-in2-set! x v))
-
-(define (tree-cmp-y x)
-  (tree-instr-in3 x))
-
-(define (tree-cmp-y-set! x v)
-  (tree-instr-in3-set! x v))
-
-(define (tree-cmp-format x)
-  (format "(cmp ~a ~a ~a ~a)"
-          (tree-instr-mode x)
-          (tree-cmp-test x)
-          (tree-instr-format (tree-cmp-x x))
-          (tree-instr-format (tree-cmp-y x))))
-
-;; assign
-
-(define (tree-assign-name x)
- (tree-instr-in1 x))
-
-(define (tree-assign-value x)
- (tree-instr-in2 x))
-
-(define (tree-assign-format x)
-  (format "(assign ~a ~a)"
-          (tree-assign-name x)
-          (tree-instr-format (tree-assign-value x))))
-
-;; function traversal
-
-(define (tree-for-each-function f mod)
-  (let ((funcs (tree-module-functions f)))
-    (for-each f funcs)))
-
-;; block traversal
-
-(define (tree-for-each-block f fun)
-  (define (visit-block block f)
-    (let ((succ (tree-block-succ block)))
-      (f block)
-      (for-each (lambda (succ)
-                  (visit-block succ f))
-                succ)))
-    (visit-block (tree-function-entry fun) f))
-
-(define (tree-for-each-block-succ f block)
-  (for-each f (tree-block-succ block)))
-
-(define (tree-for-each-block-pred f block)
-  (f (tree-block-pred block)))
-
-;; instruction traversal operations
-
-(define (tree-for-each-statement f block)
-  (let ((head (tree-block-head block)))
-    (let walk ((x head))
-      (cond
-       ((not (null? x))
-        (f x)
-        (walk (tree-instr-next x)))))))
-
-;; formatting
-
-(define (tree-instr-format x)
-  (cond
-   ;; atoms
-   ((tree-constant? x)
-    (format "(~a ~a)" (tree-constant-size x) (tree-constant-value x)))
-   ((tree-temp? x)
-    (format "$~a" (tree-temp-name x)))
-   ((tree-label? x)
-    (format "@~a" (tree-label-name x)))
-   ((tree-instr? x)
-    (case (tree-instr-op x)
-      ((add sub mul and ior shl shr)
-       (tree-binop-format  x))
-      ((call)
-       (tree-call-format x))
-      ((return)
-       (tree-ret-format x))
-      ((br)
-       (tree-br-format x))
-      ((brc)
-       (tree-brc-format x))
-      ((load)
-       (tree-load-format x))
-      ((store)
-       (tree-store-format x))
-      ((cmp)
-       (tree-cmp-format x))
-      ((assign)
-       (tree-assign-format x))))
-   (else (assert-not-reached))))
+  ;; cmp
+
+  (define (cmp-test x)
+    (instr-in1 x))
+
+  (define (cmp-test-set! x test)
+    (instr-in1-set! x test))
+
+  (define (cmp-x x)
+    (instr-in2 x))
+
+  (define (cmp-x-set! x v)
+    (instr-in2-set! x v))
+
+  (define (cmp-y x)
+    (instr-in3 x))
+
+  (define (cmp-y-set! x v)
+    (instr-in3-set! x v))
+
+  (define (cmp-format x)
+    (format "(cmp ~a ~a ~a ~a)"
+            (instr-mode x)
+            (cmp-test x)
+            (instr-format (cmp-x x))
+            (instr-format (cmp-y x))))
+
+  ;; assign
+
+  (define (assign-name x)
+    (instr-in1 x))
+
+  (define (assign-value x)
+    (instr-in2 x))
+
+  (define (assign-format x)
+    (format "(assign ~a ~a)"
+            (assign-name x)
+            (instr-format (assign-value x))))
+
+  ;; function traversal
+
+  (define (for-each-function f mod)
+    (let ((funcs (module-functions f)))
+      (for-each f funcs)))
+
+  ;; block traversal
+
+  (define (for-each-block f fun)
+    (define (visit-block block f)
+      (let ((succ (block-succ block)))
+        (f block)
+        (for-each (lambda (succ)
+                    (visit-block succ f))
+                  succ)))
+    (visit-block (function-entry fun) f))
+
+  (define (for-each-block-succ f block)
+    (for-each f (block-succ block)))
+
+  (define (for-each-block-pred f block)
+    (f (block-pred block)))
+
+  ;; instruction traversal operations
+
+  (define (for-each-statement f block)
+    (let ((head (block-head block)))
+      (let walk ((x head))
+        (cond
+         ((not (null? x))
+          (f x)
+          (walk (instr-next x)))))))
+
+  ;; formatting
+
+  (define (instr-format x)
+    (cond
+     ;; atoms
+     ((constant? x)
+      (format "(~a ~a)" (constant-size x) (constant-value x)))
+     ((temp? x)
+      (format "$~a" (temp-name x)))
+     ((label? x)
+      (format "@~a" (label-name x)))
+     ((instr? x)
+      (case (instr-op x)
+        ((add sub mul and ior shl shr)
+         (binop-format  x))
+        ((call)
+         (call-format x))
+        ((return)
+         (ret-format x))
+        ((br)
+         (br-format x))
+        ((brc)
+         (brc-format x))
+        ((load)
+         (load-format x))
+        ((store)
+         (store-format x))
+        ((cmp)
+         (cmp-format x))
+        ((assign)
+         (assign-format x))))
+     (else (assert-not-reached))))
+
+
+  )

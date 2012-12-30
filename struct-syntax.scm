@@ -2,7 +2,6 @@
 (import-for-syntax matchable)
 (import-for-syntax srfi-1)
 
-
 (define-syntax define-struct
   (syntax-rules ()
     ((define-struct name (fields ...))
@@ -27,8 +26,9 @@
            `(,%begin ,expr ,@expr*))
           ((((name fields* ...) expr expr* ...) clause* ...)
            (let ((bindings (generate-bindings v fields* 1))
-                 (altern   (generate-body v clause*)))
-             `(,%if (,%structure? ,v ',name)
+                 (altern   (generate-body v clause*))
+                 (pred     (string->symbol (format "~s?" name))))
+             `(,%if (,pred ,v)
                     (,%let ,bindings
                            ,expr ,@expr*)
                     ,altern)))))
@@ -46,5 +46,3 @@
      (struct-case v
        (pat
         (struct-let* (cls* ...) body* ...))))))
-
-

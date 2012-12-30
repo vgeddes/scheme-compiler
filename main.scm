@@ -1,11 +1,19 @@
 
-(declare (uses pass nodes liveness))
+(declare (uses pass machine tree liveness globals arch-x86-64))
 
+(import pass)
+(import machine (prefix machine mc-))
+(import tree    (prefix tree tree-))
+(import liveness)
+(import globals)
+(import arch-x86-64)
+
+(use extras)
 (use matchable)
 (use srfi-95)
 (use srfi-13)
 
-(include "struct-syntax")
+(set! *arch* <arch-x86-64>)
 
 (define (print-node node)
   (pretty-print (write-sexp node)))
@@ -54,8 +62,8 @@
            (pretty-print (hil-format-sexp output)))
           ((list? output)
            (pretty-print output))
-          ((mmod? output)
-           (mmod-print output (current-output-port)))
+          ((mc-mod? output)
+           (mc-mod-print output (current-output-port)))
           ((tree-module? output)
            (tree-module-print output (current-output-port)))
           (else

@@ -2,7 +2,7 @@
 PACKAGE := scc
 VERSION := 0.1
 
-objects := nodes.o pass.o machine.o liveness.o utils.o tree.o arch.o
+objects := globals.o pass.o machine.o liveness.o helpers.o tree.o arch.o
 
 objects_x86_64 = arch/x86-64/arch-x86-64.o arch/x86-64/spec-x86-64.o arch/x86-64/rules-x86-64.o
 
@@ -15,21 +15,21 @@ scc: main.o $(objects) $(objects_x86_64)
 
 # extra dependencies
 
-nodes.o:   struct-syntax.scm
-main.o:    struct-syntax.scm
-pass.o:    struct-syntax.scm hil-syntax.scm
-tree.o:    struct-syntax.scm
-arch/x86-64/arch-x86-64.o: arch-syntax.scm
-arch/x86-64/spec-x86-64.o: arch-syntax.scm
-arch/x86-64/rules-x86-64.o: arch-syntax.scm munch-syntax.scm
-arch.o:    nodes.scm
+liveness.o: globals.o machine.o
+main.o:    pass.o liveness.o tree.o machine.o
+pass.o:    hil-syntax.scm tree.o machine.o arch/x86-64/arch-x86-64.o
+tree.o:     helpers.o machine.o
+machine.o: globals.o helpers.o arch.o
+arch/x86-64/arch-x86-64.o: arch-syntax.o arch/x86-64/spec-x86-64.o arch/x86-64/rules-x86-64.o
+arch/x86-64/spec-x86-64.o: arch-syntax.o machine.o
+arch/x86-64/rules-x86-64.o: arch-syntax.o tree.o machine.o munch-syntax.o
+arch.o:    globals.o
 tests/test-spill.o: arch-syntax.scm
-
 
 # default rule
 
 %.o: %.scm
-	csc -c $<
+	csc -c -J $<
 
 tests: tests/test-spill
 

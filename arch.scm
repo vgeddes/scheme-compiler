@@ -1,9 +1,12 @@
 (declare (unit arch)
-         (uses nodes arch-x86-64))
+         (uses globals))
 
+(module arch *
 
-;; The default selected architecture
-(define *arch* <arch-x86-64>)
+  (import scheme)
+  (import chicken)
+
+  (import globals)
 
 ;; Get all vregs that are read in this instr
 (define (arch-vregs-read instr)
@@ -31,5 +34,4 @@
 (define (arch-make-context name params mod)
   ((arch-descriptor-make-context *arch*) name params mod))
 
-
-
+)

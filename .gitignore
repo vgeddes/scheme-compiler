@@ -2,6 +2,7 @@
 *.png
 *.dot
 *.tar.gz
+*.import.scm
 scc
 TAGS
 test-fast-match
