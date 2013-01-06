@@ -375,31 +375,45 @@
                    (lambda (r1 r2)
                      (>= (- (range-end r1) (range-start r1)) (- (range-end r2) (range-start r2))))))))
 
-  (define (add-spill spills index cxt instr vreg)
-    (let ((tmp (mc-cxt-alloc-vreg cxt (gensym 'g))))
+  ;;
+  ;; Analyse `instr' and record in `tbl' note of how it uses `vreg' (read, write, or read-write)
+  ;; This is used later on to generate correct spill code
+  ;;
+  (define (add-spill tbl index cxt instr vreg)
+    (let ((tmp (mc-cxt-alloc-vreg cxt (gensym 'g)))
       ;; replace vreg use with another tmp, which will represent a scratch register. The vreg contents are now
       ;; passed between/from the stack and the scratch register
       ;; add spill info for the user
       (cond
        ((and (mc-inst-is-read? instr vreg) (mc-inst-is-written? instr vreg))
-        (hash-table-set! spills (mc-inst-idx instr) (list 'read-write instr index tmp)))
+        (hash-table-set! tbl
+          (mc-inst-idx instr)
+          (list 'rw instr index vreg tmp)))
        ((mc-inst-is-read? instr vreg)
-        (hash-table-set! spills (mc-inst-idx instr) (list 'read instr index tmp)))
+        (hash-table-set! tbl
+          (mc-inst-idx instr)
+          (list 'r instr index vreg tmp)))
        ((mc-inst-is-written? instr vreg)
-        (hash-table-set! spills (mc-inst-idx instr) (list  'write instr index tmp)))
+        (hash-table-set! tbl
+          (mc-inst-idx instr)
+          (list 'w instr index vreg tmp)))
        (else (assert-not-reached)))
       ;; replace vreg with tmp in instruction
       (mc-inst-replace-vreg instr vreg tmp)
       ;; create a range for the scratch register
       (make-range tmp #f #f (mc-inst-idx instr) (mc-inst-idx instr))))
 
-  (define (spill spills index cxt ranges vreg)
+  (define (spill tbl slot-gen cxt ranges vreg)
+    (print "Spilling " (mc-vreg-name vreg) " at " index)
+    (let ((frm (mc-cxt-frm cxt)))
+      (mc-frm-slots-set! frm (cons (cons vreg (slot-gen)) (mc-frm-slots frm))))
+    ;; loop through all users, and analyze usage to determine how to rewrite the user
     (let loop ((user* (mc-vreg-usrs vreg)) (ranges ranges))
       (match user*
-             (() (remove-range vreg ranges))
-             ((user . user*)
-              (let ((tmp (add-spill spills index cxt user vreg)))
-                (loop user* (cons tmp ranges)))))))
+        (() (remove-range vreg ranges))
+        ((user . user*)
+         (let ((tmp (add-spill tbl index cxt user vreg)))
+           (loop user* (cons tmp ranges)))))))
 
   ;; Spilling heuristics:
   ;; if pool is empty AND active non-empty, select longest range in Active
@@ -433,15 +447,14 @@
                           (range-hreg-set! cur hreg)
                           (loop re* (update-active ac cur))))))))))))
 
-  (define (scan cxt pool spills sp-index-gen ranges)
+  (define (scan cxt pool tbl sp-index-gen ranges)
     ;; enter scanning loop
     (let loop ((ranges (sort ranges range-starts-before?)))
       (pool-reset pool)
       (match (iterate pool ranges)
              ((#f vreg)
               ;; Restart the scan after handling the spill
-              (pretty-print (list 'spill (mc-vreg-name vreg)))
-              (loop (spill spills (sp-index-gen) cxt ranges vreg)))
+              (loop (spill tbl sp-index-gen cxt ranges vreg)))
              ((#t)
               ;; update vregs to reflect the final register assignments
               (for-each (lambda (range)
@@ -449,37 +462,46 @@
                         ranges)
               ))))
 
-  (define (rewrite-spills cxt spills)
+  (define (rewrite-for-spills cxt tbl)
     (let ((rbp (mc-cxt-alloc-vreg cxt 'rbp 'rbp #f)))
-      (hash-table-for-each spills
-                           (lambda (k v)
-                             (match v
-                                    (('read-write instr index vreg)
-                                     (mc-blk-insert (mc-inst-blk instr) instr 'before
-                                                           (x86-64.mov.mdr #f '() '() rbp (mc-disp-make (* 8 index)) vreg))
-                                     (mc-blk-insert  (mc-inst-blk instr) instr 'after
-                                                     (x86-64.mov.rmd #f '() '() vreg rbp (mc-disp-make (* 8 index)))))
-                                    (('read instr index vreg)
-                                     (mc-blk-insert (mc-inst-blk instr) instr 'before
-                                                           (x86-64.mov.mdr #f '() '() rbp (mc-disp-make (* 8 index)) vreg)))
-                                    (('write instr index vreg)
-                                     (mc-blk-insert (mc-inst-blk instr) instr 'after
-                                                    (x86-64.mov.rmd #f '() '() vreg rbp (mc-disp-make (* 8 index))))))))))
+      ;; write spill code for each user
+      (hash-table-for-each tbl
+        (lambda (k v)
+          (match v
+            (('rw instr index vreg tmp)
+             (let ((disp (mc-disp-make (* 8 index))))
+               (mc-inst-replace-vreg instr vreg tmp)
+               (mc-blk-insert (mc-inst-blk instr) instr 'before
+                 (x86-64.mov.mdr #f '() '() rbp disp vreg))
+               (mc-blk-insert  (mc-inst-blk instr) instr 'after
+                 (x86-64.mov.rmd #f '() '() vreg rbp (mc-disp-make (* 8 index))))))
+            (('r instr index vreg tmp)
+             (let ((disp (mc-disp-make (* 8 index))))
+               (mc-inst-replace-vreg instr vreg tmp)
+               (mc-blk-insert (mc-inst-blk instr) instr 'before
+                 (x86-64.mov.mdr #f '() '() rbp disp vreg))))
+            (('wr instr index vreg tmp)
+             (let ((disp (mc-disp-make (* 8 index))))
+               (mc-inst-replace-vreg instr vreg tmp)
+               (mc-blk-insert (mc-inst-blk instr) instr 'after
+                 (x86-64.mov.rmd #f '() '() vreg rbp disp))))))))))
 
   (define (alloc-registers-pass cxt regs)
     (print "*** alloc-regs-pass ***\n")
 
     (let* ((ranges    (compute-ranges cxt (build-graph cxt)))
            (pool      (pool-make regs (fixed-ranges ranges)))
-           (spills    (make-hash-table = number-hash 20))
+           (tbl       (make-hash-table = number-hash 20))
            (index-gen (make-count-generator)))
 
+      ;; debugging
       (mc-cxt-print cxt (current-output-port))
+
       ;; enter scanning loop
-      (scan cxt pool spills index-gen (free-ranges ranges))
+      (scan cxt pool tbl index-gen (free-ranges ranges))
 
-
-      (rewrite-spills cxt spills)
+      ;; now write all spilling code
+      (rewrite-for-spills cxt spills)
 
       (pretty-print
        `(assignments ,(map (lambda (vreg)

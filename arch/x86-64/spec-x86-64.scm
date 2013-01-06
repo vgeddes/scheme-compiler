@@ -19,7 +19,8 @@
   ;;
 
   ;; operand types
-  ;; i8     8-bit immediate
+  ;; i8     8-bit  immediate
+  ;; i16    16-bit immediate
   ;; i32    32-bit immediate
   ;; i64    64-bit immediate
   ;; disp32 32-bit displacement
@@ -35,9 +36,13 @@
 
     ;; ret
 
-    (retnear
+    (ret
      ()
      "ret")
+
+    (ret.i16
+     ()
+     "ret   $1")
 
     ;; push
 

@@ -30,6 +30,7 @@
   (define-node hil-ref      (name rec index cxt))
   (define-node hil-rec      (name values cxt))
   (define-node hil-retcont  (name params cxt))
+  (define-node hil-label    (name))
 
   (define (hil-format-sexp cexp)
     (define (F node)
@@ -441,10 +442,9 @@
       (cond
        ((assq name kfn)
         => (lambda (x)
-             (hil-app fn (cons (car args) (cons (hil-var (cdr x)) (cdr args))))))
+             (hil-app (hil-label (hil-var-name fn)) (cons (car args) (cons (hil-var (cdr x)) (cdr args))))))
        (else
-        (let ((tmp (gensym 't)))
-          (hil-ref tmp fn 0 (hil-app (hil-var tmp) (cons (car args) (cons fn (cdr args))))))))))
+          (hil-app fn (cons (car args) (cons fn (cdr args)))))))))
 
   ;;
   ;; assume all functions escape -> each function takes a closure arg
@@ -570,6 +570,7 @@
     (analyze-free-vars node)
     (F node '() '() '()))
 
+
   (define (tree-convert-cexp cexp cont blk mod)
 
     (define (branch cexp cont pred)
@@ -619,18 +620,20 @@
                   (let ((t0 (tr-build-return (tree-atom value))))
                     (tr-block-add-statement! blk t0)))
                  ((hil-app (fn args))
-                  (let* ((tgt    (tr-make-label (hil-var-name fn)))
+                  (let* ((tgt    (cond
+                                  ((hil-label? fn)
+                                   (tr-make-label (hil-label-name fn)))
+                                  ((hil-var? fn)
+                                   (tr-make-var (hil-var-name fn)))
+                                  (else (assert-not-reached))))
                          (args*  (map (lambda (arg)
                                         (tree-atom arg))
                                       (cdr args)))
                          (t0     (tr-build-call 's tgt args*)))
                     (cond
                      ((not cont)
-                      (let* ((tmp  (gensym 't))
-                             (t1   (tr-build-assign tmp t0))
-                             (t2   (tr-build-return (tr-make-temp tmp))))
-                        (tr-block-add-statement! blk t1)
-                        (tr-block-add-statement! blk t2)))
+                      (let ((t1   (tr-build-return t0)))
+                        (tr-block-add-statement! blk t1)))
                      (else
                       (let ((t1  (tr-build-assign cont t0)))
                         (tr-block-add-statement! blk t1))))))
@@ -651,16 +654,12 @@
                            (t0     (tr-build-call 'c tgt args)))
                       (cond
                        ((not cont)
-                        (let* ((tmp  (gensym 't))
-                               (t1   (tr-build-assign tmp t0))
-                               (t2   (tr-build-return (tr-make-temp tmp))))
-                          (tr-block-add-statement! blk t1)
-                          (tr-block-add-statement! blk t2)))
+                        (let ((t1   (tr-build-return t0)))
+                          (tr-block-add-statement! blk t1)))
                        (else
                         (let ((t1  (tr-build-assign cont t0)))
                           (tr-block-add-statement! blk t1))))))
                    (else (assert-not-reached))))))
-
     (F cexp cont blk))
 
   (define (tree-convert-fn node mod)

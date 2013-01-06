@@ -34,12 +34,6 @@
       (ret          rax)
       (callee-save  ())))
 
-  ;; Our tail calling convention
-  (define *tcall*
-    '((args         (rdi rsi r8 r9 r10 r11 r12 r13 r14 r15))
-      (ret          #f)
-      (callee-save  ())))
-
   (define (cc-args cc)
     (match cc
            ((('args args) _ _)
@@ -81,7 +75,6 @@
     (and (integer? x)
          (= (width x) 64)))
 
-
   ;;
   ;; Arguments passed to a context are constrained to registers r8 ... r15.
   ;; Since we want to minimise the length of pre-colored live ranges, we move the args into temps.
@@ -102,15 +95,17 @@
                              (cc-args *scall*)))
            (blk         (mc-blk-make cxt name)))
 
-      (arch-emit-code x86-64 blk
-                      (push.r (hreg rbp))
-                      (mov.rr (hreg rsp) (hreg rbp)))
 
       ;; insert move from each arg into a tmp
       (for-each (lambda (arg tmp)
-                  (arch-emit-code x86-64 blk
-                                  (mov.rr arg tmp)))
+                  (emit-x86-64 blk
+                    (mov.rr arg tmp)))
                 arg* tmp*)
+
+      ;; allocate space for locals
+      (emit-x86-64 blk
+        (sub.i32r #f rsp
+          (attrs (replace (1 'frame-size-locals)))))
 
       (mc-cxt-strt-set! cxt blk)
       (mc-cxt-args-set! cxt arg*)
@@ -149,38 +144,32 @@
 
   ;; Generate x86-64 code for the 'return' instruction
   ;;
-  (define (emit-return-x86-64 blk value)
-
+  (define (emit-return-x86-64 cxt blk val)
     ;; move return value into %rax
     (cond
-     ((tr-constant? value)
-      (case (tr-constant-size value)
-        ((i32)
-         (arch-emit-code x86-64 blk
-                         (mov.i64r  (imm i64 0) (hreg rax))
-                         (mov.i32r  (imm i32 (tr-constant-value value)) (hreg rax))))
+     ((mc-imm? val)
+      (case (mc-imm-size val)
         ((i64)
-         (arch-emit-code x86-64 blk
-                         (mov.i64r  (imm i64 (tr-constant-value value)) (hreg rax))))
+         (emit-x86-64 blk
+           (mov.i64r val (hreg rax))))
         (else (assert-not-reached))))
-     ((tr-temp? value)
-      (arch-emit-code x86-64 blk
-                      (mov.rr (vreg (tr-temp-name value)) (hreg rax)))))
-    ;; stack frame management
-    (arch-emit-code x86-64 blk
-                    (mov.rr (hreg rbp) (hreg rsp))
-                    (pop.r  (hreg rbp))
-                    (retnear)))
-
-
-
-
+     ((mc-vreg? val)
+      (emit-x86-64 blk
+        (mov.rr val (hreg rax)))))
+    ;;  deallocate locals, and issue return
+    (let ((stack-args-size (num-stack-args cxt)))
+      (emit-x86-64 blk
+        (add.i32r #f rsp
+          (attrs (replace (list 1 'frame-size-locals))))
+        (ret.i16 (imm i16 stack-args-size)))))
 
   ;;
-  ;; Generates code for moving args into the arg-passing hregs defined by the given calling convention
+  ;; Generates code for moving args into the standard argument-passing hregs defined by the given calling convention
   ;;
-  ;; returns the list of hregs used to pass params
-  ;;
+  ;; returns a pair:
+  ;;   list of the argument-passing hregs which are actually used
+  ;;   list of regs which are clobbered
+
   (define (shuf-args blk args dst cc)
     (let* ((pair    (let f ((arg*   args)
                             (hreg*  (cc-args cc))
@@ -217,6 +206,34 @@
 
       (cons hargs clobs)))
 
+  (define (partition-args arg* cc)
+    (let ((reg* (cc-args cc)))
+      (let loop ((reg* reg*) (arg* arg*) (x '()))
+        (match reg*
+               (() (cons (reverse x) arg*))
+               ((reg . reg*)
+                (match arg*
+                       (()
+                        (cons (reverse x) '()))
+                       ((arg . arg*)
+                        (loop arg* reg* (cons arg x)))))))))
+
+  (define (convert-atom cxt node)
+    (cond
+     ((tr-temp? node)
+      (mc-cxt-alloc-vreg cxt (tr-temp-name arg)))
+     ((tr-constant? node)
+      (mc-imm-make (tr-constant-size arg) (tr-constant-value arg)))
+     ((tr-label? node)
+      (mc-disp-make (tr-label-name node)))
+     (else (assert-not-reached))))
+
+  (define (num-stack-args cxt)
+    (let ((params          (length (mc-cxt-params cxt)))
+          (arg-hregs-count (length (cc-args *scall*))))
+      (if (>= params arg-hreg-count)
+          (- params arg-hreg-count)
+          0)))
 
   ;;
   ;; Lower conventional C ABI calls to x86-64
@@ -243,65 +260,190 @@
   ;;
 
   (define (emit-ccall-x86-64 blk tgt args dst)
-    (let* ((margs  (map (lambda (arg)
-                          (cond
-                           ((tr-temp? arg)
-                            (mc-cxt-alloc-vreg (mc-blk-cxt blk) (tr-temp-name arg) ))
-                           ((tr-constant? arg)
-                            (mc-imm-make (tr-constant-size arg) (tr-constant-value arg)))
-                           (else (assert-not-reached))))
-                        args))
-           (mdst   (if dst (mc-cxt-alloc-vreg (mc-blk-cxt blk) dst #f #f) #f))
-           (mtgt   (cond
-                    ((tr-label? tgt)
-                     (mc-disp-make (tr-label-name tgt)))
-                    ((tr-temp? tgt)
-                     (mc-cxt-alloc-vreg (mc-blk-cxt blk) (tr-temp-name tgt)))
-                    (else (assert-not-reached))))
-           (rax    (mc-cxt-alloc-vreg (mc-blk-cxt blk) (gensym 't) 'rax #f))
-           (clob-info  (shuf-args blk margs (if mdst (list rax) '()) *ccall*))
-           (hargs  (car clob-info))
-           (clobs  (cdr clob-info)))
-      (cond
-       ((tr-label? tgt)
-        (x86-64.call.d blk hargs (append hargs clobs) mtgt))
-       ((tr-temp? tgt)
-        (x86-64.call.r blk hargs (append hargs clobs) mtgt))
-       (else (assert-not-reached)))
-      (if mdst
-          (arch-emit-code x86-64 blk
-                          (mov.rr rax mdst)))))
-
-  (define (emit-scall-x86-64 blk tgt args dst)
-    (let* ((margs  (map (lambda (arg)
-                          (cond
-                           ((tr-temp? arg)
-                            (mc-cxt-alloc-vreg (mc-blk-cxt blk) (tr-temp-name arg)))
-                           ((tr-constant? arg)
-                            (mc-imm-make (tr-constant-size arg) (tr-constant-value arg)))
-                           (else (assert-not-reached))))
-                        args))
-           (mdst   (mc-cxt-alloc-vreg (mc-blk-cxt blk) dst #f #f))
-           (mtgt   (cond
-                    ((tr-label? tgt)
-                     (mc-disp-make (tr-label-name tgt)))
-                    ((tr-temp? tgt)
-                     (mc-cxt-alloc-vreg (mc-blk-cxt blk) (tr-temp-name tgt)))
-                    (else (assert-not-reached))))
-           (rax    (mc-cxt-alloc-vreg (mc-blk-cxt blk) (gensym 't) 'rax #f))
-           (clob-info  (shuf-args blk margs (list rax) *scall*))
-           (hargs  (car clob-info))
-           (clobs  (cdr clob-info)))
+    (let* ((rax         (mc-cxt-alloc-vreg (mc-blk-cxt blk) (gensym 't) 'rax #f))
+           (uses/defs   (shuf-args blk margs (list rax) *ccall*))
+           (hregs-used  (car uses/defs))
+           (hregs-defs  (cdr uses/defs)))
       ;; emit call
       (cond
-       ((tr-label? tgt)
-        (x86-64.call.d blk hargs (append hargs clobs) mtgt))
-       ((tr-temp? tgt)
-        (x86-64.call.r blk hargs (append hargs clobs) mtgt))
+       ((mc-disp? tgt)
+        (emit-x86-64 blk
+                     (call.d tgt
+                             (attrs (uses hregs-used)
+                                    (defs (append hregs-used hregs-defs))))))
+       ((mc-vreg? tgt)
+        (emit-x86-64 blk
+                     (call.r tgt
+                             (attrs (uses hregs-used)
+                                    (defs (append hregs-used hregs-defs))))))
        (else (assert-not-reached)))
       ;; Move rax to dst
-      (arch-emit-code x86-64 blk
-                      (mov.rr rax mdst))))
+      (emit-x86-64 blk
+                   (mov.rr rax dst))))
+
+
+  (define (emit-scall-x86-64 blk tgt args dst)
+    (let* ((rax         (mc-cxt-alloc-vreg (mc-blk-cxt blk) (gensym 't) 'rax #f))
+           (uses/defs   (shuf-args blk margs (list rax) *scall*))
+           (hregs-used  (car uses/defs))
+           (hregs-defs  (cdr uses/defs)))
+      ;; emit call
+      (cond
+       ((mc-disp? tgt)
+        (emit-x86-64 blk
+          (call.d tgt
+            (attrs (uses hregs-used)
+                   (defs (append hregs-used hregs-defs))))))
+       ((mc-vreg? tgt)
+        (emit-x86-64 blk
+          (call.r tgt
+            (attrs (uses hregs-used)
+                   (defs (append hregs-used hregs-defs))))))
+       (else (assert-not-reached)))
+      ;; Move rax to dst
+      (emit-x86-64 blk
+        (mov.rr rax dst))))
+
+  (define (emit-tcall-x86-64 blk tgt args)
+    ;; determine which args are passed on the stack or in registers
+    (let* ((reg/stk            (partition-args args *tcall*))
+           (reg-args           (car reg/stk))
+           (stk-args           (cdr reg/stk))
+
+           ;; calculate initial size of frame for callee (stack-based-args + return address)
+           (callee-frame-size  (* 8 (+ 1 (length args))))
+           (rsp                (mc-cxt-alloc-vreg cxt 'rsp        'rsp #f))
+           (tmp1               (mc-cxt-alloc-vreg cxt (gensym 't)  #f  #f))
+           (tmp2               (mc-cxt-alloc-vreg cxt (gensym 't)  #f  #f))
+           (cxt-n-stack-args   (num-stack-args cxt))
+
+           ;; shuffle register-based args into the standard argument-passing regs
+           (uses/defs          (shuf-args blk reg-args '() *tcall*))
+           (hregs-used         (car uses/defs)))
+
+      ;; Cases:
+      ;;   Neither caller and callee have any stack-based args
+      ;;     Simply deallocate the space allocated for caller's locals and jump to callee
+      ;;   Caller has stack-based args and callee does not
+      ;;     setup argument registers, save return addr in tmp, pop caller's frame and then put return addr back on stack
+      ;;   Else
+      ;;     Then perform the full generalized setup for tail-calls
+
+      (cond
+       ((and (null? stk-args)
+             (= 0 cxt-n-stack-args)
+             (mc-disp? tgt))
+        (emit-x86-64 blk
+          ;; deallocate locals
+          (add.i32r #f rsp
+            (attrs (replace (list 1 'frame-size-locals))))
+          ;; jmp to target
+          (jmp.d tgt
+            (attrs (uses hregs-used)))))
+       ((and (null? stk-args)
+             (= 0 cxt-n-stack-args)
+             (mc-temp? tgt))
+        (emit-x86-64 blk
+          ;; fetch target addr into tmp1
+          (mov.mr tgt tmp1
+          ;; deallocate caller's locals
+          (add.i32r #f rsp
+            (attrs (replace (list 1 'frame-size-locals))))
+          ;; jump to addr in tmp1
+          (jmp.r tmp1
+            (attrs (uses hregs-used))))))
+       ((and (null? stk-args)
+             (mc-disp? tgt))
+        (emit-x86-64 blk
+          ;; save return addr into tmp1
+          (mov.mdr rsp #f
+            (attrs (replace (list 2 'frame-return-address-offset))))
+          ;; pop frame
+          (add.i32r #f rsp
+            (attrs (replace (list 1 'frame-size))))
+          ;; push tmp1, thus creating an initial frame for callee
+          (push.r tmp1)
+          ;; jmp to target
+          (jmp.d tgt
+            (attrs (uses hregs-used)))))
+       ((and (null? stk-args)
+             (mc-temp? tgt))
+        (emit-x86-64 blk
+          ;; save return addr into tmp1
+          (mov.mdr rsp #f
+            (attrs (replace (list 2 'frame-retaddr-offset))))
+          ;; fetch target addr into tmp2
+          (mov.mr tgt tmp2
+          ;; pop frame
+          (add.i32r #f rsp
+            (attrs (replace (list 1 'frame-size))))
+          ;; push tmp1, thus creating an initial frame for callee
+          (push.r tmp1)
+          ;; jmp to addr in tmp2
+          (jmp.r tmp2
+            (attrs (uses hregs-used))))))
+       (else
+        ;; if jumping via a temp copy target addr into tmp1
+        (if (mc-vreg? tgt)
+            (emit-x86-64 blk
+              (mov.mr tgt tmp1)))
+
+        ;; subtract size from rsp to allocate scratch space for frame
+        (emit-x86-64 blk
+          (sub.i32r (imm i32 callee-frame-size) rsp))
+
+        ;; write stack-based args into the new frame
+        (let loop ((arg* stk-args) (offs 8))
+          (match arg*
+            (() '())
+            ((arg . arg*)
+             (cond
+              ((mc-vreg? arg)
+               (emit-x86-64 blk
+                 (mov.rmd arg rsp (- callee-frame-size offs)
+                   (attrs (offset callee-frame-size)))))
+              ((mc-imm? arg)
+               (emit-x86-64 blk
+                 (mov.i64r imm tmp2)
+                 (mov.rmd tmp2 rsp (- callee-frame-size offs))))
+              (else (assert-not-reached)))
+             (loop arg* (+ offs 8)))))
+
+        ;; write return addr into the new frame
+        (emit-x86-64 blk
+          (mov.mdr rsp #f tmp2
+            (attrs (replace 2 'frame-retaddr-offset)
+                   (offset callee-frame-size)))
+          (mov.rm tmp2 rsp))
+
+        ;; now copy the prepared frame into the current, active frame. Edgy stuff!
+        (let loop ((arg* args) (offs 8))
+          (match arg*
+            (() #t)
+            ((arg . arg*)
+             (emit-x86-64 blk
+               (mov.mdr rsp (- size offs) tmp2)
+               (mov.rmd tmp2 rsp #f
+                 (attrs (replace (list 3 'frame-offset offs))
+                        (offset  callee-frame-size))))))
+          (loop arg* (+ offs 8)))
+
+        (emit-x86-64 blk
+          ;; make rsp point to moved return addr
+          (mov.mdr rsp #f tmp1
+            (attrs (replace (list 2 'frame-offset callee-frame-size))
+                   (offset  callee-frame-size))))
+
+        (cond
+         ((mc-vreg? tgt)
+          (emit-x86-64 blk
+            (jmp.r tmp1
+                   (attrs (uses hregs-used)))))
+         ((mc-disp? tgt)
+          (emit-x86-64 blk
+            (jmp.d tgt
+                   (attrs (uses hregs-used))))))))))
+
 
   (define (generate-bridge-context-x86-64 mod)
     (let* ((cxt  (mc-make-cxt '__scheme_exec '() '() '()))
@@ -325,23 +467,25 @@
   ;;
   (define (emit-stm block stm)
     (match stm
-           (($ tr-instr 'return _ value)
-            (emit-return-x86-64 block value))
-           (($ tr-instr 'call _ tgt args)
-            (let ((conv (tr-instr-attr stm 'callconv)))
-              (case conv
-                ((c)
-                 (emit-ccall-x86-64 block tgt args #f))
-                (else '()))))
-           (($ tr-instr 'assign _ dst ($ tr-instr 'call _ tgt args))
-            (let ((conv (tr-instr-attr (tr-assign-value stm) 'callconv)))
-              (case conv
-                ((c)
-                 (emit-ccall-x86-64 block tgt args dst))
-                ((s)
-                 (emit-scall-x86-64 block tgt args dst))
-                (else '()))))
-           (_ (munch-x86-64 block stm))))
+      (($ tr-instr 'return _ ($ tr-instr 'call _ tgt args))
+       (emit-tcall-x86-64 block tgt args #f))
+      (($ tr-instr 'return _ value)
+       (emit-return-x86-64 block value))
+      (($ tr-instr 'call _ tgt args)
+       (let ((conv (tr-instr-attr stm 'callconv)))
+         (case conv
+           ((c)
+            (emit-ccall-x86-64 block tgt args #f))
+           (else '()))))
+      (($ tr-instr 'assign _ dst ($ tr-instr 'call _ tgt args))
+       (let ((conv (tr-instr-attr (tr-assign-value stm) 'callconv)))
+         (case conv
+           ((c)
+            (emit-ccall-x86-64 block tgt args dst))
+           ((s)
+            (emit-scall-x86-64 block tgt args dst))
+           (else (assert-not-reached)))))
+      (_ (munch-x86-64 block stm))))
 
   (define <arch-x86-64>
     (make-arch-descriptor

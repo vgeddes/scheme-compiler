@@ -16,17 +16,17 @@
 
   ;; aggregate structures
   (define-struct mod   (cxts))
-  (define-struct cxt   (name args strt vrgs))
+  (define-struct cxt   (name args strt vrgs slots))
   (define-struct blk   (name head tail succ cxt))
 
   ;; instructions
   (define-struct spec  (name fmt fmt-indices verifiers reads writes))
-  (define-struct inst  (spec ops nxt prv iu id idx blk data))
+  (define-struct inst  (spec ops nxt prv idx blk attrs))
 
   ;; operands
-  (define-struct vreg    (name hreg pref usrs data))
-  (define-struct imm     (size value))
-  (define-struct disp   (value))
+  (define-struct vreg  (name hreg pref usrs data))
+  (define-struct imm   (size value))
+  (define-struct disp  (value))
 
   ;; constructors
   (define (mod-make)
@@ -38,8 +38,8 @@
   (define (blk-make cxt name)
     (make-blk name '() '() '() cxt))
 
-  (define (inst-make blk spec iu id ops)
-    (let ((instr (make-inst spec ops '() '() iu id #f blk '())))
+  (define (inst-make spec blk ops attrs)
+    (let ((instr (make-inst spec ops '() '() #f blk attrs)))
       (for-each (lambda (op)
                   (cond
                    ((vreg? op)
@@ -243,10 +243,10 @@
         ((after)
          (cond
           ((and (null? next))
-           (prev-set inst     curs)
-           (next-set inst     '())
+           (prev-set inst curs)
+           (next-set inst '())
            (next-set curs inst)
-           (tail-set blk   inst))
+           (tail-set blk  inst))
           (else
            (prev-set inst curs)
            (next-set inst next)

@@ -39,6 +39,7 @@
 
       ;; operand types
       ;; i8   8-bit immediate
+      ;; i16  16-bit immediate
       ;; i32  32-bit immediate
       ;; i64  64-bit immediate
       ;; m64  64-bit memory reference (using [base + disp] addressing)
@@ -47,7 +48,7 @@
 
       (define (parse-operand-type type)
         (case type
-          ((i8 i32 i64)
+          ((i8 i16 i32 i64)
            'mc-imm?)
           ((disp32)
            'mc-disp?)
@@ -106,21 +107,22 @@
                    (reverse defs)))
                  ((os . os*)
                   (match os
-                         ((type flag* ...)
-                          (let ((verifier (parse-operand-type type))
-                                (uses      (if (is-in? flag*)
-                                               (cons #t uses)
-                                               (cons #f uses)))
-                                (defs       (if (is-out? flag*)
-                                                (cons #t defs)
-                                                (cons #f defs))))
-                            (f os* (+ i 1) uses defs (cons verifier verifiers)))))))))
+                    ((type flag* ...)
+                     (let ((verifier (parse-operand-type type))
+                           (uses      (if (is-in? flag*)
+                                          (cons #t uses)
+                                          (cons #f uses)))
+                           (defs       (if (is-out? flag*)
+                                           (cons #t defs)
+                                           (cons #f defs))))
+                       (f os* (+ i 1) uses defs (cons verifier verifiers)))))))))
 
 
       (define (gen-instr-spec arch name fmt operand-spec*)
         (let* ((spec                      (string->symbol (format "~s.~s-spec" arch name)))
                (predicate                 (string->symbol (format "~s.~s?" arch name)))
-               (qualified-name            (string->symbol (format "~s.~s" arch name)))
+               (canonical-name            (string->symbol (format "~s.~s" arch name)))
+               (arity                     (length operand-spec*))
                (operand-info              (parse-operand-specs operand-spec*))
                (fmt-info                  (parse-fmt fmt))
                (fmt                       (car fmt-info))
@@ -132,26 +134,21 @@
                (%lambda                   (r 'lambda))
                (%let                      (r 'let))
                (%match                    (r 'match))
-               (%mc-inst-make               (r 'mc-inst-make))
-               (%mc-make-spec               (r 'mc-make-spec)))
+               (%mc-inst-make             (r 'mc-inst-make))
+               (%mc-make-spec             (r 'mc-make-spec)))
 
           `((,%define ,spec
-                      (,%mc-make-spec
-                       ',name
-                       ',fmt
-                       ',fmt-indices
-                       ',verifiers
-                       ,vregs-read
-                       ,vregs-written))
-            (,%define ,predicate
-                      (,%lambda (x)
-                                (and (mc-inst? x) (eq? (mc-inst-spec x) ,spec))))
-            (,%define ,qualified-name
-                      (,%lambda operands
-                                (,%match operands
-                                         ((block56 iu56 id56 rest56* ...)
-                                          (,%mc-inst-make block56 ,spec iu56 id56 rest56*))
-                                         (else (assert-not-reached))))))))
+              (,%mc-make-spec
+               ',name
+               ',fmt
+               ',fmt-indices
+               ',verifiers
+               ,vregs-read
+               ,vregs-written))
+            (,%define (,predicate x)
+              (and (mc-inst? x) (eq? (mc-inst-spec x) ,spec)))
+            (,%define (,canonical-name blk ops attrs)
+              (,%mc-inst-make ,spec blk ops attrs)))))
 
       (match e
              (('define-arch-instructions arch spec* ...)
@@ -159,8 +156,8 @@
                      (apply append
                             (map (lambda (instr-def)
                                    (match instr-def
-                                          ((name (operand-spec* ...) fmt)
-                                           (gen-instr-spec arch name fmt operand-spec*))))
+                                     ((name (operand-spec* ...) fmt)
+                                      (gen-instr-spec arch name fmt operand-spec*))))
                                  spec*)))
                     (%begin (r 'begin)))
                 `(,%begin
@@ -177,38 +174,53 @@
   ;; Convenience macro for building assembly code
 
 
-  (define-syntax arch-emit-code
+  (define-syntax emit
     (lambda (e r c)
 
       (define (expand blk e)
-        (let ((%mc-cxt-alloc-vreg (r 'mc-cxt-alloc-vreg))
-              (%mc-blk-cxt        (r 'mc-blk-cxt))
+        (let ((%mc-cxt-alloc-vreg  (r 'mc-cxt-alloc-vreg))
+              (%mc-blk-cxt         (r 'mc-blk-cxt))
               (%mc-imm-make        (r 'mc-imm-make))
-              (%mc-disp-make        (r 'mc-disp-make)))
+              (%mc-disp-make       (r 'mc-disp-make)))
           (match e
-                 (('vreg x)
-                  `(,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,blk) ,x))
-                 (('hreg x)
-                  `(,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,blk) ',x ',x #f))
-                 (('imm size x)
-                  `(,%mc-imm-make ',size ,x))
-                 (('disp x)
-                  `(,%mc-disp-make ,x))
-                 ((op* ...)
-                  (map (lambda (op) (expand blk op)) op*))
-                 (_ e))))
+            (('vreg x)
+             `(,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,blk) ,x))
+            (('hreg x)
+             `(,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,blk) ',x ',x #f))
+            (('imm size x)
+             `(,%mc-imm-make ',size ,x))
+            (('disp x)
+             `(,%mc-disp-make ,x))
+            ((op* ...)
+             (map (lambda (op) (expand blk op)) op*))
+            (_ e))))
+
+      ;; '((foo v1) (bar v2))  => '((cons 'foo v1) (cons 'bar v2))
+
+      (define (parse-attrs attrs)
+          ,@(reverse
+             (fold (lambda (attr x)
+                     (match attr
+                       ((name value)
+                        (cons `(cons ',name ,value) x))))
+                   '()
+                   attrs))))
 
       (define (generate arch blk instr)
-        (let ((qualified-name (string->symbol (format "~s.~s" arch (car instr)))))
+        (let ((canon-name (string->symbol (format "~s.~s"      arch (car instr))))
+              (spec       (string->symbol (format "~s.~s-spec" arch (car instr)))))
           (match instr
-                 ((name operands* ...)
-                  `(,qualified-name ,blk '() '() ,@(expand blk operands*))))))
+            ((name opers* ... ('attrs attr* ...))
+             `(,canon-name
+                ,blk
+                (list ,@(expand blk opers*))
+                (list ,@(parse-attrs attr*)))))))
 
       (match e
-             (('arch-emit-code arch blk x* ...)
-              `(begin
-                 ,@(map (lambda (instr)
-                          (generate arch blk instr))
-                        x*))))))
+        (('emit arch blk x* ...)
+         `(begin
+            ,@(map (lambda (instr)
+                     (generate arch blk instr))
+                   x*))))))
 
 )
