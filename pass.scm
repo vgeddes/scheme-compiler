@@ -444,7 +444,7 @@
         => (lambda (x)
              (hil-app (hil-label (hil-var-name fn)) (cons (car args) (cons (hil-var (cdr x)) (cdr args))))))
        (else
-          (hil-app fn (cons (car args) (cons fn (cdr args)))))))))
+          (hil-app fn (cons (car args) (cons fn (cdr args))))))))
 
   ;;
   ;; assume all functions escape -> each function takes a closure arg
@@ -609,7 +609,7 @@
                  ((hil-rec (name values cxt))
                   (let* ((t0 (tr-build-assign
                               name
-                              (tr-build-call 'c
+                              (tr-build-ccall
                                              (tr-make-label '__sc_record)
                                              (map (lambda (arg)
                                                     (tree-atom arg))
@@ -624,12 +624,12 @@
                                   ((hil-label? fn)
                                    (tr-make-label (hil-label-name fn)))
                                   ((hil-var? fn)
-                                   (tr-make-var (hil-var-name fn)))
+                                   (tr-make-temp (hil-var-name fn)))
                                   (else (assert-not-reached))))
                          (args*  (map (lambda (arg)
                                         (tree-atom arg))
                                       (cdr args)))
-                         (t0     (tr-build-call 's tgt args*)))
+                         (t0     (tr-build-scall tgt args*)))
                     (cond
                      ((not cont)
                       (let ((t1   (tr-build-return t0)))
@@ -651,7 +651,7 @@
                            (args   (map (lambda (arg)
                                           (tree-atom arg))
                                         (cdr params)))
-                           (t0     (tr-build-call 'c tgt args)))
+                           (t0     (tr-build-ccall tgt args)))
                       (cond
                        ((not cont)
                         (let ((t1   (tr-build-return t0)))
@@ -664,30 +664,29 @@
 
   (define (tree-convert-fn node mod)
     (node-case node
-               ((hil-fn (name params body cxt))
-                (let* ((params* (map (lambda (arg)
-                                       (tr-make-temp arg))
-                                     (cdr params)))
-                       (fun      (tr-make-function name params* '() mod))
-                       (blk      (tr-make-block (gensym 'b) '() '() '() '() fun)))
-                  (tr-module-add-function! mod fun)
-                  (tr-function-entry-set! fun blk)
-                  (tree-convert-cexp body #f blk mod)))))
+      ((hil-fn (name params body cxt))
+       (let* ((params* (map (lambda (arg)
+                              (tr-make-temp arg))
+                            (cdr params)))
+              (fun      (tr-make-function name params* '() mod))
+              (blk      (tr-make-block (gensym 'b) '() '() '() '() fun)))
+         (tr-module-add-function! mod fun)
+         (tr-function-entry-set! fun blk)
+         (tree-convert-cexp body #f blk mod)))))
 
   (define (tree-convert node)
     (node-case node
-               ((hil-mod (entry))
-                (let* ((mod    (tr-make-module '()))
-                       (fun    (tr-make-function '__begin '() '() mod))
-                       (blk    (tr-make-block    (gensym 'b) '() '() '() '() fun)))
-                  (tr-module-add-function! mod fun)
-                  (tr-function-entry-set! fun blk)
-                  (tree-convert-cexp entry #f blk mod)
-                  mod))
-               (else (assert-not-reached))))
+      ((hil-mod (entry))
+       (let* ((mod    (tr-make-module '()))
+              (fun    (tr-make-function '__begin '() '() mod))
+              (blk    (tr-make-block    (gensym 'b) '() '() '() '() fun)))
+         (tr-module-add-function! mod fun)
+         (tr-function-entry-set! fun blk)
+         (tree-convert-cexp entry #f blk mod)
+         mod))
+      (else (assert-not-reached))))
 
   (define (select-instructions mod)
-    (pretty-print (list mod (tr-module? mod)))
     (struct-case mod
       ((tr-module functions)
        (let* ((mc-mod (mc-mod-make))
@@ -715,11 +714,15 @@
         mblk))
 
     (struct-case fun
-                 ((tr-function name params entry module)
-                  (let* ((mc-cxt (mc-cxt-make name (map (lambda (p) (tr-temp-name p)) params) mc-mod)))
-                    (walk-block entry mc-cxt (mc-cxt-strt mc-cxt))
-                    mc-cxt))
-                 (else (assert-not-reached))))
+      ((tr-function name params entry module)
+       (let* ((mc-cxt (mc-cxt-make name
+                                   (map (lambda (p)
+                                          (tr-temp-name p))
+                                        params)
+                                   mc-mod)))
+         (walk-block entry mc-cxt (mc-cxt-strt mc-cxt))
+         mc-cxt))
+      (else (assert-not-reached))))
 
   (define (immediate-rep x)
     (cond

@@ -16,7 +16,7 @@
 
   ;; aggregate structures
   (define-struct mod   (cxts))
-  (define-struct cxt   (name args strt vrgs slots))
+  (define-struct cxt   (name strt vrgs hreg-params stk-params stk-locals))
   (define-struct blk   (name head tail succ cxt))
 
   ;; instructions
@@ -24,7 +24,7 @@
   (define-struct inst  (spec ops nxt prv idx blk attrs))
 
   ;; operands
-  (define-struct vreg  (name hreg pref usrs data))
+  (define-struct vreg  (name hreg pref usrs slot data))
   (define-struct imm   (size value))
   (define-struct disp  (value))
 
@@ -52,9 +52,9 @@
     (lambda operands
       (match operands
              ((name)
-              (make-vreg name #f #f '() '()))
+              (make-vreg name #f #f '() #f '()))
              ((name hreg pref)
-              (make-vreg name hreg pref '() '()))
+              (make-vreg name hreg pref '() #f '()))
              (else (assert-not-reached)))))
 
   (define (disp-make value)
@@ -63,13 +63,12 @@
   (define (imm-make size value)
     (make-imm size value))
 
-
   ;; Operand Protocol
 
   (define (mop-equal? o1 o2)
-    (or (vreg-equal? o1 o2)
-        (imm-equal? o1 o2)
-        (disp-equal? o1 o2)))
+    (or (vreg-equal?  o1 o2)
+        (imm-equal?   o1 o2)
+        (disp-equal?  o1 o2)))
 
   (define (mop-format op)
     (arch-operand-format op))
@@ -118,6 +117,12 @@
                (inst-vregs-written instr))
          #t))
 
+  (define (inst-attr inst name)
+    (cond
+     ((assq name (inst-attrs inst))
+      => cdr)
+     (else #f)))
+
   ;; Replace a vreg
   (define (inst-replace-vreg instr vr x)
     (define (replace ops)
@@ -152,26 +157,36 @@
                     vr)))))
              (else (assert-not-reached)))))
 
+  ;; hregs
+  (define (hreg-ref cxt name)
+    (cxt-alloc-vreg cxt name name #f))
+
+
   ;; Printing
 
   (define (mod-print mod port)
     (fprintf port "section  .text\n\n")
     (fprintf port "  global __scheme_exec\n\n")
-    (cxt-for-each
-     (lambda (cxt)
-       (cxt-print cxt port))
-     mod))
+    (cxt-for-each (lambda (cxt)
+                    (cxt-print cxt port))
+                  mod))
+
 
   (define (cxt-print cxt port)
     (struct-case cxt
-                 ((cxt name args entry)
+      ((cxt name strt vregs hreg-params stk-params stk-locals)
 
-                  (fprintf port "  # context: name=~s args=~s\n" name (map (lambda (arg) (vreg-name arg)) args))
+       (fprintf port "  # context: ~s\n" name)
+       (fprintf port "  #   args:      ~s\n" (map vreg-name (append hreg-params stk-params)))
+       (fprintf port "  #   reg-args:  ~s\n" (map vreg-name hreg-params))
+       (fprintf port "  #   frame:\n")
+       (fprintf port "  #     args:    ~s\n" (map vreg-name stk-params))
+       (fprintf port "  #     locals:  ~s\n" 0)
 
-                  (blk-for-each
-                   (lambda (block)
-                     (blk-print block port))
-                   cxt))))
+       (blk-for-each
+        (lambda (block)
+          (blk-print block port))
+        cxt))))
 
   (define (blk-print block port)
     (struct-case block

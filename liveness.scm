@@ -16,11 +16,12 @@
   (use srfi-69)
 
   (import spec-x86-64)
+  (import arch-syntax)
 
   (define *regs* '(rax rbx rcx rdx rsi rdi r8 r9 r10 r11 r12 r13 r14 r15))
 
   (define-struct scan-context (mcxt ranges hreg-pool))
-  (define-struct node         (index value pred succ in out def use live))
+  (define-struct node         (index value pred succ in out def use))
   (define-struct range        (vreg hreg pref start end))
   (define-struct pool         (hregs reg-names ranges))
 
@@ -63,7 +64,7 @@
                                 (let ((number (counter)))
                                   (mc-inst-idx-set! instr number)
                                   (f (mc-inst-nxt instr)
-                                     (cons (make-node number instr '() '() '() '() '() '() '()) nodes)))))))
+                                     (cons (make-node number instr '() '() '() '() '() '()) nodes)))))))
                      (head (car nodes))
                      (tail (car (reverse nodes)))
                      (succ (map (lambda (succ)
@@ -107,31 +108,32 @@
 
   ;; Get all vregs defined at the given node
   (define (def-at node)
-    (append (mc-inst-vregs-written (node-value node)) (mc-inst-id (node-value node))))
+    (append (mc-inst-vregs-written (node-value node))
+            (or (mc-inst-attr (node-value node) 'defs) '())))
 
   ;; Get all vregs used at the given node
   (define (use-at node)
-    (append (mc-inst-vregs-read (node-value node)) (mc-inst-iu (node-value node))))
+    (append (mc-inst-vregs-read (node-value node))
+            (or (mc-inst-attr (node-value node) 'uses) '())))
 
   ;; Perform iterative liveness analysis on the graph
   ;;
   ;; We define the following sets for each node:
   ;;   def: Set of vregs defined at this node
   ;;   use: Set of vregs used at this node
-  ;;   in:  Set of vregs that are live just before this node
+  ;;   in:  Set of vregs that are live at this node
   ;;   out: Set of vregs that are live just after this node
   ;;
   ;; The analysis takes place on a reverse pre-ordering of the graph nodes.
   ;; (i.e from the last node to the first node)
   ;;
-  (define (analyze-liveness graph)
-    (let ((node* (sort-reverse-pre-order graph)))
+  (define (analyze-liveness node)
       ;; initialize def/use for each node
       (for-each
        (lambda (node)
          (node-def-set! node (def-at node))
          (node-use-set! node (use-at node)))
-       node*)
+       node)
       ;; iterate over nodes (backwards) to propagate uses.
       (for-each
        (lambda (node)
@@ -148,14 +150,7 @@
                                    (lset-difference mc-vreg-equal?
                                                     (node-out node)
                                                     (node-def node)))))
-       node*)
-      ;; final set of live variables at each point is (node[i].in UNION node[i].def)
-      (for-each
-       (lambda (node)
-         (node-live-set! node
-                         (lset-union mc-vreg-equal? (node-in node) (node-def node))))
-       node*)
-      graph))
+       node))
 
   (define (range-make vreg hreg pref start end)
     (make-range vreg hreg pref start end))
@@ -203,51 +198,71 @@
       #t)
      (else #f)))
 
+  (define (range-home rg)
+    (mc-vreg-slot (range-vreg rg)))
+
   ;;
   ;; Compute live ranges for each vreg in the context
   ;;
-  (define (compute-ranges cxt graph)
+  (define (compute-ranges graph)
+    (let ((node* (sort-reverse-pre-order graph))
+          (actv  (make-hash-table eq? symbol-hash 32))
+          (acc  '()))
 
-    (analyze-liveness graph)
+      ;; do live-variable data-flow analysis
+      ;; This is actually only useful for graph-coloring allocation.
+      ;  where sets of interfering live variables need to be known
+      (analyze-liveness node*)
 
-    ;; update live ranges at node
-    (define (update node)
-      (for-each
-       (lambda (vreg)
-         (let ((range (mc-vreg-data vreg))
-               (index (node-index node)))
-           (cond
-            ((null? range)
-             (mc-vreg-data-set! vreg (range-make vreg (mc-vreg-hreg vreg) (mc-vreg-pref vreg) index index)))
-            (else
-             (range-end-set! range index)))))
-       (node-live node)))
+      (define (walk node)
+        (let ((live   (node-in    node))
+              (def    (node-def   node))
+              (index  (node-index node)))
 
-    (let walk ((node graph))
-      (match node
-             (() '())
-             (_
-              (update node)
-              (for-each (lambda (succ)
-                          (walk succ))
-                        (node-succ node)))))
+         ;; (pretty-print (list (list index (map mc-vreg-name def) (map mc-vreg-name live))
+         ;;                     (map format-range acc)))
 
-    ;; make dummy ranges for unused variables
-    (for-each (lambda (vreg)
-                (cond
-                 ((null? (mc-vreg-data vreg))
-                  (mc-vreg-data-set! vreg (range-make vreg (mc-vreg-hreg vreg) (mc-vreg-pref vreg) -1 -1)))))
-              (mc-cxt-args cxt))
+          ;; for each vreg defined at this node,
+          ;; remove range from active, set range.start=index,
+          ;; and add to the set of processed ranges (acc)
+          (for-each (lambda (vreg)
+                      (let ((range (hash-table-ref/default actv (mc-vreg-name vreg) #f)))
+                        (cond
+                         (range
+                          (range-start-set! range index)
+                          (hash-table-delete! actv (mc-vreg-name vreg))
+                          (push acc range))
+                         (else
+                          (push acc (range-make vreg
+                                                (mc-vreg-hreg vreg)
+                                                (mc-vreg-pref vreg)
+                                                index index))))))
+                    def)
 
-    ;; return all ranges
+          ;; for each vreg live (node.in U node.use) at this node,
+          ;; if there is not yet an active range (in active),
+          ;; then create a new range in active and set range.end=index
+          (for-each (lambda (vreg)
+                      (let ((range (hash-table-ref/default actv (mc-vreg-name vreg) #f)))
+                        (cond
+                         ((not range)
+                          (let ((range (range-make vreg
+                                                   (mc-vreg-hreg vreg)
+                                                   (mc-vreg-pref vreg)
+                                                   0 index)))
+                            (hash-table-set! actv (mc-vreg-name vreg) range))))))
+                    live)))
 
-    (map (lambda (vreg)
-       ;;    (pretty-print (list (mc-vreg-name vreg) (if (mc-vreg? (mc-vreg-hreg vreg))
-         ;;                                              (mc-vreg-name (mc-vreg-hreg vreg))
-           ;;                                            (mc-vreg-hreg vreg))
-             ;;                  (if (null? (mc-vreg-data vreg)) #f (format-range (mc-vreg-data vreg)))))
-           (mc-vreg-data vreg))
-         (mc-cxt-vrgs cxt)))
+      ;; At this point remaining ranges in active will
+      ;; represent vregs which have not been explicitly defined,
+      ;; such as function parameters
+      (hash-table-for-each actv
+                           (lambda (k v)
+                             (range-start-set! v 0)
+                             (push acc v)))
+
+      (for-each walk node*)
+      acc))
 
   (define (pool-make hregs ranges)
     (let ((table  (make-hash-table eq? symbol-hash 24)))
@@ -258,11 +273,11 @@
                 (hash-table-set! table hreg '())
                 (let loop-fx ((fx* ranges) (acc '()))
                   (match fx*
-                         (() (hash-table-set! table hreg (reverse acc)))
-                         ((fx . fx*)
-                          (if (eq? hreg (range-hreg fx))
-                              (loop-fx fx* (cons fx acc))
-                              (loop-fx fx* acc)))))
+                    (() (hash-table-set! table hreg (reverse acc)))
+                    ((fx . fx*)
+                     (if (eq? hreg (range-hreg fx))
+                         (loop-fx fx* (cons fx acc))
+                         (loop-fx fx* acc)))))
                 (loop hreg*))))
       (make-pool hregs hregs table)))
 
@@ -380,7 +395,7 @@
   ;; This is used later on to generate correct spill code
   ;;
   (define (add-spill tbl index cxt instr vreg)
-    (let ((tmp (mc-cxt-alloc-vreg cxt (gensym 'g)))
+    (let ((tmp (mc-cxt-alloc-vreg cxt (gensym 't))))
       ;; replace vreg use with another tmp, which will represent a scratch register. The vreg contents are now
       ;; passed between/from the stack and the scratch register
       ;; add spill info for the user
@@ -404,16 +419,16 @@
       (make-range tmp #f #f (mc-inst-idx instr) (mc-inst-idx instr))))
 
   (define (spill tbl slot-gen cxt ranges vreg)
-    (print "Spilling " (mc-vreg-name vreg) " at " index)
-    (let ((frm (mc-cxt-frm cxt)))
-      (mc-frm-slots-set! frm (cons (cons vreg (slot-gen)) (mc-frm-slots frm))))
-    ;; loop through all users, and analyze usage to determine how to rewrite the user
-    (let loop ((user* (mc-vreg-usrs vreg)) (ranges ranges))
-      (match user*
-        (() (remove-range vreg ranges))
-        ((user . user*)
-         (let ((tmp (add-spill tbl index cxt user vreg)))
-           (loop user* (cons tmp ranges)))))))
+    (print "Spilling " (mc-vreg-name vreg))
+    (let* ((slot  (mc-vreg-slot vreg))
+           (index (if slot slot (slot-gen))))
+      ;; loop through all users, and analyze usage to determine how to rewrite the user
+      (let loop ((user* (mc-vreg-usrs vreg)) (ranges ranges))
+        (match user*
+          (() (remove-range vreg ranges))
+          ((user . user*)
+           (let ((tmp (add-spill tbl index cxt user vreg)))
+             (loop user* (cons tmp ranges))))))))
 
   ;; Spilling heuristics:
   ;; if pool is empty AND active non-empty, select longest range in Active
@@ -424,84 +439,97 @@
     (let loop ((re*  ranges)
                (ac  '()))
       (match re*
-             ;; return (#t) to indicate allocation success
-             (() (list #t))
-             ;; handle current range
-             ((cur . re*)
-              (pretty-print (format-step pool cur ac re*))
-              (let ((ac (expire-active pool cur ac)))
-                ;; Backtrack if a spill is required
-                ;; return (#f vreg) to indicate allocation failure
-                (cond
-                 ((and (null? (pool-hregs pool)) (null? ac))
-                  (print 'a)
-                  (list #f (range-vreg cur)))
-                 ((and (null? (pool-hregs pool)) (not (null? ac)))
-                  (print 'b)
-                  (list #f (range-vreg (select-range-to-spill ac))))
-                 (else
-                  (let ((hreg (hreg-alloc pool cur)))
-                    (if (not hreg)
-                        (list #f (range-vreg cur))
-                        (begin
-                          (range-hreg-set! cur hreg)
-                          (loop re* (update-active ac cur))))))))))))
+        ;; return (#t) to indicate allocation success
+        (() (list #t))
+        ;; handle current range
+        ((cur . re*)
+         (pretty-print (format-step pool cur ac re*))
+         (let ((ac (expire-active pool cur ac)))
+           ;; Backtrack if a spill is required
+           ;; return (#f vreg) to indicate allocation failure
+           (cond
+            ((range-home cur)
+             (list #f (range-vreg cur)))
+            ((and (null? (pool-hregs pool)) (null? ac))
+             (print 'a)
+             (list #f (range-vreg cur)))
+            ((and (null? (pool-hregs pool)) (not (null? ac)))
+             (print 'b)
+             (list #f (range-vreg (select-range-to-spill ac))))
+            (else
+             (let ((hreg (hreg-alloc pool cur)))
+               (if (not hreg)
+                   (list #f (range-vreg cur))
+                   (begin
+                     (range-hreg-set! cur hreg)
+                     (loop re* (update-active ac cur))))))))))))
 
   (define (scan cxt pool tbl sp-index-gen ranges)
     ;; enter scanning loop
     (let loop ((ranges (sort ranges range-starts-before?)))
       (pool-reset pool)
       (match (iterate pool ranges)
-             ((#f vreg)
-              ;; Restart the scan after handling the spill
-              (loop (spill tbl sp-index-gen cxt ranges vreg)))
-             ((#t)
-              ;; update vregs to reflect the final register assignments
-              (for-each (lambda (range)
-                          (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
-                        ranges)
-              ))))
+        ((#f vreg)
+         ;; Restart the scan after handling the spill
+         (loop (spill tbl sp-index-gen cxt ranges vreg)))
+        ((#t)
+         ;; update vregs to reflect the final register assignments
+         (for-each (lambda (range)
+                     (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
+                   ranges)))))
 
   (define (rewrite-for-spills cxt tbl)
-    (let ((rbp (mc-cxt-alloc-vreg cxt 'rbp 'rbp #f)))
+    (let ((rsp (mc-cxt-alloc-vreg cxt 'rsp 'rsp #f)))
       ;; write spill code for each user
       (hash-table-for-each tbl
         (lambda (k v)
           (match v
             (('rw instr index vreg tmp)
-             (let ((disp (mc-disp-make (* 8 index))))
-               (mc-inst-replace-vreg instr vreg tmp)
-               (mc-blk-insert (mc-inst-blk instr) instr 'before
-                 (x86-64.mov.mdr #f '() '() rbp disp vreg))
-               (mc-blk-insert  (mc-inst-blk instr) instr 'after
-                 (x86-64.mov.rmd #f '() '() vreg rbp (mc-disp-make (* 8 index))))))
+             (mc-inst-replace-vreg instr vreg tmp)
+             (mc-blk-insert (mc-inst-blk instr) instr 'before
+               (emit-x86-64 #f
+                 (mov.mdr rsp #f vreg
+                   (attrs (replace (list 2 'frame-local-slot index))))))
+             (mc-blk-insert (mc-inst-blk instr) instr 'after
+               (emit-x86-64 #f
+                 (mov.rmd vreg rsp #f
+                   (attrs (replace (list 3 'frame-local-slot index)))))))
             (('r instr index vreg tmp)
              (let ((disp (mc-disp-make (* 8 index))))
                (mc-inst-replace-vreg instr vreg tmp)
                (mc-blk-insert (mc-inst-blk instr) instr 'before
-                 (x86-64.mov.mdr #f '() '() rbp disp vreg))))
+                 (emit-x86-64 #f
+                   (mov.mdr rsp #f vreg
+                     (attrs (replace (list 2 'frame-local-slot index))))))))
             (('wr instr index vreg tmp)
              (let ((disp (mc-disp-make (* 8 index))))
                (mc-inst-replace-vreg instr vreg tmp)
                (mc-blk-insert (mc-inst-blk instr) instr 'after
-                 (x86-64.mov.rmd #f '() '() vreg rbp disp))))))))))
+                 (emit-x86-64 #f
+                   (mov.rmd vreg rsp #f
+                     (attrs (replace (list 3 'frame-local-slot index)))))))))))))
 
   (define (alloc-registers-pass cxt regs)
     (print "*** alloc-regs-pass ***\n")
 
-    (let* ((ranges    (compute-ranges cxt (build-graph cxt)))
+    (let* ((graph     (build-graph cxt))
+           (ranges    (compute-ranges graph))
            (pool      (pool-make regs (fixed-ranges ranges)))
            (tbl       (make-hash-table = number-hash 20))
            (index-gen (make-count-generator)))
 
-      ;; debugging
+      (for-each (lambda (rg)
+                  (pretty-print (format-range rg)))
+                ranges)
+
+  ;;    debugging
       (mc-cxt-print cxt (current-output-port))
 
-      ;; enter scanning loop
+     ;; enter scanning loop
       (scan cxt pool tbl index-gen (free-ranges ranges))
 
       ;; now write all spilling code
-      (rewrite-for-spills cxt spills)
+      (rewrite-for-spills cxt tbl)
 
       (pretty-print
        `(assignments ,(map (lambda (vreg)

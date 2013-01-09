@@ -8,7 +8,12 @@
   (import-for-syntax srfi-1)
 
   (export assert-not-reached)
-  (export define-struct struct-case struct-let*)
+  (export define-struct struct-case struct-let* push)
+
+  (define-syntax push
+    (syntax-rules ()
+      ((push lst val)
+       (set! lst (cons val lst)))))
 
   (define-syntax assert-not-reached
     (lambda (e r c)

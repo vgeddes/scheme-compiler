@@ -3,10 +3,117 @@
   (import scheme)
   (import chicken)
 
-  (export define-munch-rules)
+  (export define-munch-rules tree-match)
 
   (import-for-syntax matchable)
   (import-for-syntax srfi-1)
+
+  ;; compile-pattern
+  ;;
+  ;; Transform high-level patterns into low-level 'match patterns
+  ;;
+  ;;  (add (i32 x) op2)
+  ;;  => ($ tree-instr 'add ('mode 'i32) (? i32? x) (? symbol? g67))
+  ;;
+  (define-for-syntax (compile-pattern pat renamer)
+    (define (walk pat)
+      (match pat
+        ;; assign
+        (('assign ('temp x) op)
+         `($ tree-instr 'assign _ (? symbol? ,x) ,(walk op) _ _ _ _ _))
+
+        (('assign dst op)
+         `($ tree-instr 'assign _ dst ,(walk op) _ _ _ _ _))
+
+        (('scall tgt args)
+         `($ tree-instr 'scall _ tgt args _ _ _ _ _))
+
+        (('ccall tgt args)
+         `($ tree-instr 'ccall _ tgt args _ _ _ _ _))
+
+        (('return val)
+         `($ tree-instr 'return _ ,(walk val) _ _ _ _ _ _))
+
+        ;; binops
+        (('add mode op1 op2)
+         `($ tree-instr 'add ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+        (('sub mode op1 op2)
+         `($ tree-instr 'sub ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+        (('and mode op1 op2)
+         `($ tree-instr 'and ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+        (('ior mode op1 op2)
+         `($ tree-instr 'ior ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+        (('xor mode op1 op2)
+         `($ tree-instr 'xor ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+        (('shl mode op1 op2)
+         `($ tree-instr 'shl ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+        (('shr mode op1 op2)
+         `($ tree-instr 'shr ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
+
+        ;; load
+        (('load mode addr)
+         `($ tree-instr 'load  ',(walk mode) ,(walk addr) _ _ _ _ _ _))
+
+        ;; store
+        (('store mode value addr)
+         `($ tree-instr 'store ',(walk mode) ,(walk value) ,(walk addr) _ _ _ _ _))
+
+        ;; brc
+        (('brc cond label1 label2)
+         `($ tree-instr 'brc _ ,(walk cond) ,(walk label1) ,(walk label2) _ _ _ _))
+
+        ;; br
+        (('br label)
+         `($ tree-instr 'br _ ,(walk label) _ _ _ _ _ _))
+
+        ;; cmp
+        (('cmp mode ('op test) op1 op2)
+         `($ tree-instr 'cmp ',(walk mode) ',test ,(walk op1) ,(walk op2) _ _ _ _))
+
+        ;; atoms
+        (('const size x)
+         `($ tree-constant ',size ,x))
+        (('label x)
+         `($ tree-label ,x))
+        (('temp x)
+         `($ tree-temp ,x))
+
+        ((? symbol? x) (if renamer (renamer x) x))
+
+        ;; mode
+        (('mode x) x)
+
+        (_ (pretty-print pat) (error "no matching pattern"))))
+
+    (walk pat))
+
+  (define-syntax tree-match
+    (lambda (e r c)
+      (match e
+        (('tree-match node rule* ...)
+         ;; (pretty-print
+
+         ;;  `(match ,node
+         ;;          ,@(map (lambda (rule)
+         ;;                   (match rule
+         ;;                          (('else action* ...)
+         ;;                           `(_ ,@action*))
+         ;;                          ((pat action* ...)
+         ;;                           `(,(compile-pattern pat #f)
+         ;;                             ,@action*))
+         ;;                          (_ (pretty-print rule) (error "no matching pattern"))))
+         ;;                 rule*)))
+         `(match ,node
+           ,@(map (lambda (rule)
+                    (match rule
+                      (('else action* ...)
+                       `(_ ,@action*))
+                      ((pat action* ...)
+                       `(,(compile-pattern pat #f)
+                         ,@action*))))
+                  rule*))))))
+
+
 
   ;; convenience constructors (used in pattern match rules)
 
@@ -54,74 +161,6 @@
                  ((opcode operand* ...)
                   (apply append (map select-names operand*)))))
 
-        ;; compile-pattern
-        ;;
-        ;; Transform high-level patterns into low-level 'match patterns
-        ;;
-        ;;  (add (i32 x) op2)
-        ;;  => ($ tree-instr 'add ('mode 'i32) (? i32? x) (? symbol? g67))
-        ;;
-        (define (compile-pattern pat)
-          (define (walk pat)
-            (match pat
-
-                   ;; assign
-                   (('assign ('temp x) op)
-                    `($ tree-instr 'assign _ (? symbol? ,x) ,(walk op) _ _ _ _ _))
-
-                   ;; binops
-                   (('add mode op1 op2)
-                    `($ tree-instr 'add ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-                   (('sub mode op1 op2)
-                    `($ tree-instr 'sub ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-                   (('and mode op1 op2)
-                    `($ tree-instr 'and ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-                   (('ior mode op1 op2)
-                    `($ tree-instr 'ior ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-                   (('xor mode op1 op2)
-                    `($ tree-instr 'xor ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-                   (('shl mode op1 op2)
-                    `($ tree-instr 'shl ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-                   (('shr mode op1 op2)
-                    `($ tree-instr 'shr ',(walk mode) ,(walk op1) ,(walk op2) _ _ _ _ _))
-
-                   ;; load
-                   (('load mode addr)
-                    `($ tree-instr 'load  ',(walk mode) ,(walk addr) _ _ _ _ _ _))
-
-                   ;; store
-                   (('store mode value addr)
-                    `($ tree-instr 'store ',(walk mode) ,(walk value) ,(walk addr) _ _ _ _ _))
-
-                   ;; brc
-                   (('brc cond label1 label2)
-                    `($ tree-instr 'brc _ ,(walk cond) ,(walk label1) ,(walk label2) _ _ _ _))
-
-                   ;; br
-                   (('br label)
-                    `($ tree-instr 'br _ ,(walk label) _ _ _ _ _ _))
-
-                   ;; cmp
-                   (('cmp mode ('op test) op1 op2)
-                    `($ tree-instr 'cmp ',(walk mode) ',test ,(walk op1) ,(walk op2) _ _ _ _))
-
-                   ;; atoms
-                   (('const size x)
-                    `($ tree-constant ',size ,x))
-                   (('label x)
-                    `($ tree-label ,x))
-                   (('temp x)
-                    `($ tree-temp ,x))
-
-                   ((? symbol? x) (rename x))
-
-                   ;; mode
-                   (('mode x) x)
-
-                   ;;(_ (print pat))
-
-                   ))
-          (walk pat))
 
         (define (gen-bindings arch bindings)
           (let ((function-name  (string->symbol (format "munch-~s" arch))))
@@ -143,7 +182,7 @@
 
         (define (gen-code arch pat temps out tmpl*)
           (let* ((nodes-to-expand (select-names    pat))
-                 (pat-compiled    (compile-pattern pat))
+                 (pat-compiled    (compile-pattern pat rename))
                  (bindings
                   (append
                    ;; Bind names to expanded nodes
@@ -161,7 +200,7 @@
 
             `(,pat-compiled
               (,%let* ,bindings
-                      (arch-emit-code ,arch ,%block ,@tmpl*)
+                      (emit-x86-64 ,%block ,@tmpl*)
                       ,out))))
 
         (define (compile arch rule)
@@ -186,11 +225,11 @@
                 (let* ((rule-compiled* (compile-rules arch rule*))
                        (function-name  (string->symbol (format "munch-~s" arch))))
 
-                  ;;         (pretty-print
+                  ;; (pretty-print
                   ;;  `(,%define (,function-name ,%block ,%tree)
                   ;;             (,%match ,%tree
                   ;;               (($ tree-temp ,%t1)
-                  ;;                (,%mc-cxt-allocate-vreg (,%mc-blk-cxt ,%block) ,%t1))
+                  ;;                (,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,%block) ,%t1))
                   ;;               ,@rule-compiled*
                   ;;              (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern")))))
 

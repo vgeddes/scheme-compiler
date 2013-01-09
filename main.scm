@@ -38,8 +38,8 @@
     cps-convert
     closure-convert
     tree-convert
-  ;;  select-instructions
-  ;;  alloc-regs
+    select-instructions
+    alloc-regs
    ))
 
 (define (compile pipeline source)

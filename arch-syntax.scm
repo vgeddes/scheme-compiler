@@ -3,7 +3,7 @@
   (import scheme)
   (import chicken)
 
-  (export define-arch-instructions define-arch-registers arch-emit-code)
+  (export define-arch-instructions define-arch-registers emit-x86-64)
 
   (import-for-syntax matchable)
   (import-for-syntax srfi-1)
@@ -76,7 +76,10 @@
         (let f ((flag* bool-flag*) (i 0) (accessors '()))
           (match flag*
                  (()
-                  `(lambda (ops) (append ,@(reverse accessors))))
+                  `(lambda (ops)
+                     ,(if (null? accessors)
+                          ''()
+                          `(append ,@(reverse accessors)))))
                  ((flag . flag*)
                   (let ((accessors (if flag
                                        (cons `(list (,(accessor i) ops)) accessors)
@@ -174,7 +177,7 @@
   ;; Convenience macro for building assembly code
 
 
-  (define-syntax emit
+  (define-syntax emit-x86-64
     (lambda (e r c)
 
       (define (expand blk e)
@@ -198,29 +201,43 @@
       ;; '((foo v1) (bar v2))  => '((cons 'foo v1) (cons 'bar v2))
 
       (define (parse-attrs attrs)
-          ,@(reverse
-             (fold (lambda (attr x)
-                     (match attr
-                       ((name value)
-                        (cons `(cons ',name ,value) x))))
-                   '()
-                   attrs))))
+        (reverse
+         (fold (lambda (attr x)
+                 (match attr
+                        ((name value)
+                         (cons `(cons ',name ,value) x))
+                        (_ (pretty-print attr) (error "no matching pattern"))))
+               '()
+               attrs)))
 
-      (define (generate arch blk instr)
-        (let ((canon-name (string->symbol (format "~s.~s"      arch (car instr))))
-              (spec       (string->symbol (format "~s.~s-spec" arch (car instr)))))
+      (define (generate blk instr)
+        (let ((canon-name (string->symbol (format "x86-64.~s"      (car instr))))
+              (spec       (string->symbol (format "x86-64.~s-spec" (car instr)))))
           (match instr
             ((name opers* ... ('attrs attr* ...))
              `(,canon-name
                 ,blk
                 (list ,@(expand blk opers*))
-                (list ,@(parse-attrs attr*)))))))
+                (list ,@(parse-attrs attr*))))
+            ((name opers* ...)
+             `(,canon-name
+               ,blk
+               (list ,@(expand blk opers*))
+               (list)))
+            (_ (pretty-print instr) (error "no matching pattern")))))
 
       (match e
-        (('emit arch blk x* ...)
+        (('emit-x86-64 blk x* ...)
+           ;; (pretty-print
+           ;; `(begin
+           ;;    ,@(map (lambda (instr)
+           ;;              (generate blk instr))
+           ;;            x*)))
+
          `(begin
             ,@(map (lambda (instr)
-                     (generate arch blk instr))
-                   x*))))))
+                     (generate blk instr))
+                   x*)))
+        (_ (pretty-print e) (error "no matching pattern")))))
 
 )

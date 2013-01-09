@@ -30,7 +30,8 @@
   ;; in   register is read
   ;; out  register is modified
 
-  (define-arch-registers x86-64 (rsp rbp rsi rdi rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15))
+  (define-arch-registers x86-64
+    (rsp rbp rsi rdi rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15))
 
   (define-arch-instructions x86-64
 
@@ -41,7 +42,7 @@
      "ret")
 
     (ret.i16
-     ()
+     ((i16))
      "ret   $1")
 
     ;; push

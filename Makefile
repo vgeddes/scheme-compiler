@@ -11,7 +11,7 @@ tests_bin = tests/test-fast-match
 all: scc tests
 
 scc: main.o $(objects) $(objects_x86_64)
-	csc -o $@ $^
+	csc -d2 -o $@ $^
 
 # extra dependencies
 
@@ -29,7 +29,7 @@ tests/test-spill.o: arch-syntax.scm
 # default rule
 
 %.o: %.scm
-	csc -c -J $<
+	csc -d2 -c -J $<
 
 tests: tests/test-spill
 

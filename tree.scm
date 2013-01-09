@@ -17,7 +17,6 @@
        (assert (pred x) "invalid type"))))
 
   ;; Selection language
-
   (define-struct module   (functions))
 
   (define-struct function (name args entry module))
@@ -31,8 +30,6 @@
   (define-struct label    (name))
 
   (define-struct constant (size value))
-
-  (define-struct data     (size name))
 
 
   (define *tag*
@@ -162,13 +159,20 @@
             (in2   addr))))
       node))
 
-  (define (make-call callconv target args)
+  (define (make-scall target args)
     (let ((node
            (make-instr-internal
-            (op    'call)
+            (op    'scall)
             (in1    target)
-            (in2    args)
-            (attrs `((callconv . ,callconv))))))
+            (in2    args))))
+      node))
+
+  (define (make-ccall target args)
+    (let ((node
+           (make-instr-internal
+            (op    'ccall)
+            (in1    target)
+            (in2    args))))
       node))
 
   (define (make-return value)
@@ -226,7 +230,8 @@
   (define build-block      make-block)
   (define build-load       make-load)
   (define build-store      make-store)
-  (define build-call       make-call)
+  (define build-scall      make-scall)
+  (define build-ccall      make-ccall)
   (define build-return     make-return)
   (define build-cmp        make-cmp)
   (define build-br         make-br)
@@ -557,7 +562,9 @@
       (case (instr-op x)
         ((add sub mul and ior shl shr)
          (binop-format  x))
-        ((call)
+        ((scall)
+         (call-format x))
+        ((ccall)
          (call-format x))
         ((return)
          (ret-format x))
