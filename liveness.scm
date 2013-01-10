@@ -369,20 +369,9 @@
   (define (update-active active range)
     (sort (cons range active) range-ends-before?))
 
-  ;; remove range
-  (define (remove-range vreg ranges)
-    (let f ((range* ranges) (x '()))
-      (match range*
-             (() (sort x range-starts-before?))
-             ((range . range*)
-              (cond
-               ((mc-vreg-equal? (range-vreg range) vreg)
-                (f range* x))
-               (else
-                (range-hreg-set! range #f)
-                (f range* (cons range x))))))))
-
   ;; For our spilling heuristic, we select the longest range in active
+  ;; TODO: rather use the number of vreg uses as a heuristic
+  ;;
   (define (select-range-to-spill active)
     (if (null? active)
         #f
@@ -413,9 +402,7 @@
           (mc-inst-idx instr)
           (list 'w instr index vreg tmp)))
        (else (assert-not-reached)))
-      ;; replace vreg with tmp in instruction
-      (mc-inst-replace-vreg instr vreg tmp)
-      ;; create a range for the scratch register
+      ;; create a point range for the scratch register
       (make-range tmp #f #f (mc-inst-idx instr) (mc-inst-idx instr))))
 
   (define (spill tbl slot-gen cxt ranges vreg)
@@ -425,7 +412,7 @@
       ;; loop through all users, and analyze usage to determine how to rewrite the user
       (let loop ((user* (mc-vreg-usrs vreg)) (ranges ranges))
         (match user*
-          (() (remove-range vreg ranges))
+          (() ranges)
           ((user . user*)
            (let ((tmp (add-spill tbl index cxt user vreg)))
              (loop user* (cons tmp ranges))))))))
@@ -435,7 +422,7 @@
   ;; if pool is empty select cur
   ;; if pool is non-empty and hreg-alloc fails, then spill cur (indicates that cur is a callee-save var)
 
-  (define (iterate pool ranges)
+  (define (iterate pool cxt tbl slot-gen ranges)
     (let loop ((re*  ranges)
                (ac  '()))
       (match re*
@@ -448,35 +435,40 @@
            ;; Backtrack if a spill is required
            ;; return (#f vreg) to indicate allocation failure
            (cond
-            ((range-home cur)
-             (list #f (range-vreg cur)))
-            ((and (null? (pool-hregs pool)) (null? ac))
-             (print 'a)
-             (list #f (range-vreg cur)))
-            ((and (null? (pool-hregs pool)) (not (null? ac)))
-             (print 'b)
-             (list #f (range-vreg (select-range-to-spill ac))))
-            (else
-             (let ((hreg (hreg-alloc pool cur)))
-               (if (not hreg)
-                   (list #f (range-vreg cur))
-                   (begin
-                     (range-hreg-set! cur hreg)
-                     (loop re* (update-active ac cur))))))))))))
 
-  (define (scan cxt pool tbl sp-index-gen ranges)
-    ;; enter scanning loop
-    (let loop ((ranges (sort ranges range-starts-before?)))
+            ;; vreg is already marked for spilling (since it likely represents a stack-based parameter)
+            ((range-home cur)
+             (let ((re* (spill tbl slot-gen cxt re* (range-vreg cur))))
+               (loop re* ac)))
+
+            ;; no free vregs and there are active ranges
+            ((and (null? (pool-hregs pool)) (not (null? ac)))
+             (let* ((sel (select-range-to-spill ac))
+                    (ac  (delete sel ac eq?))
+                    (re* (spill tbl slot-gen cxt re* (range-vreg sel))))
+
+               ;; return hreg to the pool
+               (pool-push pool (range-hreg sel))
+               (range-hreg-set! sel #f))))
+
+           ;; now at least 1 free hregs is available, but need to check for overlaps with fixed ranges
+           ;; we should always be able to allocate point ranges here (TODO: add assertions)
+           (let ((hreg (hreg-alloc pool cur)))
+             (if (not hreg)
+                 (let ((re* (spill tbl slot-gen cxt re* (range-vreg cur))))
+                   (loop re* ac))
+                 (begin
+                   (range-hreg-set! cur hreg)
+                   (loop re* (update-active ac cur))))))))))
+
+  (define (scan cxt pool tbl slot-gen ranges)
+    (let ((ranges (sort ranges range-starts-before?)))
       (pool-reset pool)
-      (match (iterate pool ranges)
-        ((#f vreg)
-         ;; Restart the scan after handling the spill
-         (loop (spill tbl sp-index-gen cxt ranges vreg)))
-        ((#t)
-         ;; update vregs to reflect the final register assignments
-         (for-each (lambda (range)
-                     (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
-                   ranges)))))
+      (iterate pool cxt tbl slot-gen ranges)
+      ;; update vregs to reflect the final register assignments
+      (for-each (lambda (range)
+                  (mc-vreg-hreg-set! (range-vreg range) (range-hreg range)))
+                ranges)))
 
   (define (rewrite-for-spills cxt tbl)
     (let ((rsp (mc-cxt-alloc-vreg cxt 'rsp 'rsp #f)))
@@ -529,7 +521,7 @@
       (scan cxt pool tbl index-gen (free-ranges ranges))
 
       ;; now write all spilling code
-      (rewrite-for-spills cxt tbl)
+      ;; (rewrite-for-spills cxt tbl)
 
       (pretty-print
        `(assignments ,(map (lambda (vreg)
