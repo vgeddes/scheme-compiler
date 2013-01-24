@@ -30,10 +30,26 @@
   ;; in   register is read
   ;; out  register is modified
 
-  (define-arch-registers x86-64
-    (rsp rbp rsi rdi rax rbx rcx rdx r8 r9 r10 r11 r12 r13 r14 r15))
+  (define-registers x86-64
+    ((rip (reserved))
+     (rsp (reserved))
+     (rax ())
+     (rbx ())
+     (rcx ())
+     (rdx ())
+     (rdi ())
+     (rsi ())
+     (r8  ())
+     (r9  ())
+     (r10 ())
+     (r11 ())
+     (r12 ())
+     (r13 ())
+     (r14 ())
+     (r15 ())
+     (rbp ())))
 
-  (define-arch-instructions x86-64
+  (define-instructions x86-64
 
     ;; ret
 
@@ -73,13 +89,21 @@
 
     ;; call
 
-    (call.d
-     ((disp32))
-     "call  [rip + $1]")
+    (call.m
+     ((reg in))
+     "call  [$1]")
+
+    (call.md
+     ((reg in) (disp32))
+     "call  [$1 + $2]")
 
     (call.r
      ((reg in))
-     "call  [$1]")
+     "call  $1")
+
+    (call.d
+     ((disp32))
+     "call  $1")
 
     ;; add
 
@@ -249,7 +273,7 @@
 
     (jmp.d
      ((disp32))
-     "jmp   [rip + $1]")
+     "jmp   $1")
 
     (jmp.r
      ((reg in))
@@ -268,34 +292,34 @@
 
     (jo.d
      ((disp32))
-     "jo    [rip + $1]")
+     "jo    $1")
 
     (jno.d
      ((disp32))
-     "jno   [rip + $1]")
+     "jno   $1")
 
     (je.d
      ((disp32))
-     "je    [rip + $1]")
+     "je    $1")
 
     (jne.d
      ((disp32))
-     "jne   [rip + $1]")
+     "jne   $1")
 
     (jl.d
      ((disp32))
-     "jl    [rip + $1]")
+     "jl    $1")
 
     (jle.d
      ((disp32))
-     "jle   [rip + $1]")
+     "jle   $1")
 
     (jge.d
      ((disp32))
-     "jge   [rip + $1]")
+     "jge   $1")
 
     (jg.d
      ((disp32))
-     "jg    [rip + $1]"))
+     "jg    $1"))
 
 )

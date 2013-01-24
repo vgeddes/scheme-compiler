@@ -582,5 +582,4 @@
          (assign-format x))))
      (else (assert-not-reached))))
 
-
-  )
+)

@@ -1,5 +1,4 @@
-
-(declare (uses pass machine tree liveness globals arch-x86-64))
+(declare (uses pass machine tree globals arch arch-x86-64 liveness))
 
 (import pass)
 (import machine (prefix machine mc-))
@@ -7,6 +6,7 @@
 (import liveness)
 (import globals)
 (import arch-x86-64)
+(import arch)
 
 (use extras)
 (use matchable)
@@ -17,18 +17,6 @@
 
 (define (print-node node)
   (pretty-print (write-sexp node)))
-
-(define pipeline
-  (list
-    normalize
-    hil-convert
-    alpha-convert
-    cps-convert
-    closure-convert
-    flatten
-    tree-convert
-    select-instructions
-    alloc-regs))
 
 (define pipeline
   (list
@@ -50,6 +38,7 @@
 
 
 (define (main argv)
+  (arch-init)
   (cond
     ((= (length argv) 1)
      (fprintf (current-output-port) "Usage: scc FILE\n"))

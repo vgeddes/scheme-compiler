@@ -3,12 +3,12 @@
   (import scheme)
   (import chicken)
 
-  (export define-arch-instructions define-arch-registers emit-x86-64)
+  (export define-instructions define-registers emit-x86-64)
 
   (import-for-syntax matchable)
   (import-for-syntax srfi-1)
 
-  (define-syntax define-arch-instructions
+  (define-syntax define-instructions
     (lambda (e r c)
 
       (define (parse-fmt fmt)
@@ -154,25 +154,24 @@
               (,%mc-inst-make ,spec blk ops attrs)))))
 
       (match e
-             (('define-arch-instructions arch spec* ...)
-              (let ((code
-                     (apply append
-                            (map (lambda (instr-def)
-                                   (match instr-def
-                                     ((name (operand-spec* ...) fmt)
-                                      (gen-instr-spec arch name fmt operand-spec*))))
-                                 spec*)))
-                    (%begin (r 'begin)))
-                `(,%begin
-                  ,@code))))))
+        (('define-instructions arch spec* ...)
+         (let ((code
+                (apply append
+                       (map (lambda (instr-def)
+                              (match instr-def
+                                ((name (operand-spec* ...) fmt)
+                                 (gen-instr-spec arch name fmt operand-spec*))))
+                            spec*)))
+               (%begin (r 'begin)))
+           `(,%begin
+             ,@code))))))
 
-  (define-syntax define-arch-registers
+  (define-syntax define-registers
     (lambda (e r c)
       (match e
-             (('define-arch-registers arch (reg* ...))
-              (let ((def (string->symbol (format "~s-registers" arch))))
-                `(define ,def ',reg*))))))
-
+        (('define-registers arch (spec* ...))
+         (let ((def (string->symbol (format "*~s-registers*" arch))))
+           `(define ,def ',spec*))))))
 
   ;; Convenience macro for building assembly code
 
@@ -181,15 +180,10 @@
     (lambda (e r c)
 
       (define (expand blk e)
-        (let ((%mc-cxt-alloc-vreg  (r 'mc-cxt-alloc-vreg))
-              (%mc-blk-cxt         (r 'mc-blk-cxt))
-              (%mc-imm-make        (r 'mc-imm-make))
-              (%mc-disp-make       (r 'mc-disp-make)))
+        (let ((%mc-blk-cxt     (r 'mc-blk-cxt))
+              (%mc-imm-make    (r 'mc-imm-make))
+              (%mc-disp-make   (r 'mc-disp-make)))
           (match e
-            (('vreg x)
-             `(,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,blk) ,x))
-            (('hreg x)
-             `(,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,blk) ',x ',x #f))
             (('imm size x)
              `(,%mc-imm-make ',size ,x))
             (('disp x)
@@ -228,12 +222,6 @@
 
       (match e
         (('emit-x86-64 blk x* ...)
-           ;; (pretty-print
-           ;; `(begin
-           ;;    ,@(map (lambda (instr)
-           ;;              (generate blk instr))
-           ;;            x*)))
-
          `(begin
             ,@(map (lambda (instr)
                      (generate blk instr))

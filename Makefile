@@ -2,7 +2,7 @@
 PACKAGE := scc
 VERSION := 0.1
 
-objects := globals.o pass.o machine.o liveness.o helpers.o tree.o arch.o
+objects := globals.o pass.o machine.o liveness.o  helpers.o tree.o arch.o
 
 objects_x86_64 = arch/x86-64/arch-x86-64.o arch/x86-64/spec-x86-64.o arch/x86-64/rules-x86-64.o
 
@@ -31,7 +31,7 @@ tests/test-spill.o: arch-syntax.scm
 %.o: %.scm
 	csc -d2 -c -J $<
 
-tests: tests/test-spill
+tests:
 
 tests/test-fast-match: tests/test-fast-match.scm fast-match-syntax.scm
 	csc -o $@ $<

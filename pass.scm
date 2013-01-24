@@ -697,31 +697,38 @@
                     mc-mod))
       (else (assert-not-reached))))
 
-  (define (select-function mc-mod fun)
-    (define (walk-block block mc-cxt mblk)
+  (define (select-function m-mod fun)
+    (define (walk-block block m-cxt m-blk vreg-ref)
       (let ((succ (map (lambda (succ)
                          (walk-block
-                          succ
-                          mc-cxt
-                          (mc-blk-make mc-cxt (tr-block-name succ))))
+                           succ
+                           m-cxt
+                           (mc-blk-make m-cxt (tr-block-name succ))
+                           vreg-ref))
                        (tr-block-succ block))))
 
-        (mc-blk-succ-set! mblk succ)
+        (mc-blk-succ-set! m-blk succ)
 
         (tr-for-each-statement (lambda (stm)
-                                 (arch-emit-statement mblk stm))
+                                 (arch-emit-statement m-cxt m-blk vreg-ref stm))
                                block)
-        mblk))
+        m-blk))
 
     (struct-case fun
-      ((tr-function name params entry module)
-       (let* ((mc-cxt (mc-cxt-make name
-                                   (map (lambda (p)
-                                          (tr-temp-name p))
-                                        params)
-                                   mc-mod)))
-         (walk-block entry mc-cxt (mc-cxt-strt mc-cxt))
-         mc-cxt))
+      ((tr-function name args entry module)
+       (let* ((cxt/vrp (mc-cxt-make name
+                                    (map (lambda (p)
+                                           (tr-temp-name p))
+                                         args)
+                                    m-mod))
+              (cxt (car cxt/vrp))
+              (vrp (cdr cxt/vrp)))
+         (walk-block
+          entry
+          cxt
+          (mc-cxt-strt cxt)
+          vrp)
+         cxt))
       (else (assert-not-reached))))
 
   (define (immediate-rep x)

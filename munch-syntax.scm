@@ -119,30 +119,29 @@
 
   (define-syntax define-munch-rules
     (lambda (e r c)
-      (let ((%let*       (r 'let*))
-            (%let        (r 'let))
-            (%if         (r 'if))
-            (%cond       (r 'cond))
-            (%else       (r 'else))
-            (%define     (r 'define))
-            (%match      (r 'match))
-            (%gensym     (r 'gensym))
-            (%block      (r 'block))
-            (%tree       (r 'tree))
-            (%t1         (gensym 't))
-            (%mc-blk-append           (r 'mc-blk-append))
-            (%mc-cxt-alloc-vreg  (r 'mc-cxt-alloc-vreg))
-            (%mc-blk-cxt              (r 'mc-blk-cxt)))
+      (let ((%let*           (r 'let*))
+            (%let            (r 'let))
+            (%if             (r 'if))
+            (%cond           (r 'cond))
+            (%else           (r 'else))
+            (%define         (r 'define))
+            (%match          (r 'match))
+            (%gensym         (r 'gensym))
+            (%block          (r 'block))
+            (%tree           (r 'tree))
+            (t1              (gensym 't))
+            (%cxt            (r 'cxt))
+            (%vreg-ref       (r 'vreg-ref)))
 
 
-        (define renamed '())
+        (define *renamed* '())
         (define (rename name)
           (cond
-           ((assq name renamed)
+           ((assq name *renamed*)
             => cdr)
            (else
             (let ((x (gensym)))
-              (set! renamed (cons (cons name x) renamed))
+              (set! *renamed* (cons (cons name x) *renamed*))
               x))))
 
         ;; select-names
@@ -165,9 +164,9 @@
         (define (gen-bindings arch bindings)
           (let ((function-name  (string->symbol (format "munch-~s" arch))))
             (match bindings
-                   (() '())
-                   ((expr . rest)
-                    (cons `(,expr (,function-name ,%block ,(rename expr))) (gen-bindings arch rest))))))
+              (() '())
+              ((expr . rest)
+               (cons `(,expr (,function-name ,%cxt ,%block ,%vreg-ref ,(rename expr))) (gen-bindings arch rest))))))
 
         (define (parse-temp-cls out)
           (match out
@@ -191,17 +190,17 @@
                     ;; bind the name 'out' to a gensym if this production requires a return value (in which case out != #f)
                     ;; AND the user-specified return value is not already listed in nodes-to-expand.
                     ((and out (not (memq out nodes-to-expand)))
-                     `((,out (,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,%block) (,%gensym 't)))))
+                     `((,out (,%vreg-ref (,%gensym 't)))))
                     (else '()))
                    ;; bind temps to unique symbols (remembering not to bind 'out again if it is declared as a temp)
                    (map (lambda (temp)
-                          `(,temp (,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,%block) (,%gensym 't))))
+                          `(,temp (,%vreg-ref (,%gensym 't))))
                         (lset-difference eq? temps (list out))))))
 
             `(,pat-compiled
               (,%let* ,bindings
-                      (emit-x86-64 ,%block ,@tmpl*)
-                      ,out))))
+                (emit-x86-64 ,%block ,@tmpl*)
+                ,out))))
 
         (define (compile arch rule)
           (match rule
@@ -222,22 +221,24 @@
 
         (match e
                (('define-munch-rules arch rule* ...)
-                (let* ((rule-compiled* (compile-rules arch rule*))
-                       (function-name  (string->symbol (format "munch-~s" arch))))
+                (let*
+                  ((rule-compiled* (compile-rules arch rule*))
+                   (function-name  (string->symbol (format "munch-~s" arch))))
 
                   ;; (pretty-print
-                  ;;  `(,%define (,function-name ,%block ,%tree)
-                  ;;             (,%match ,%tree
-                  ;;               (($ tree-temp ,%t1)
-                  ;;                (,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,%block) ,%t1))
-                  ;;               ,@rule-compiled*
-                  ;;              (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern")))))
+                  ;; `(,%define (,function-name ,%cxt ,%block ,%tree ,%vreg-ref)
+                  ;;            (,%match ,%tree
+                  ;;                     (($ tree-temp ,t1)
+                  ;;                      (,%vreg-ref ,t1 ,%cxt)
+                  ;;                      ,@rule-compiled*)))
+                  ;;              )
 
-                  `(,%define (,function-name ,%block ,%tree)
-                             (,%match ,%tree
-                                      (($ tree-temp ,%t1)
-                                       (,%mc-cxt-alloc-vreg (,%mc-blk-cxt ,%block) ,%t1))
-                                      ,@rule-compiled*
-                                      (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern"))))))))))
+                  `(,%define (,function-name ,%cxt ,%block ,%vreg-ref ,%tree)
+                     (,%define vreg ,%vreg-ref)
+                     (,%match ,%tree
+                       (($ tree-temp ,t1)
+                        (,%vreg-ref ,t1))
+                        ,@rule-compiled*
+                        (_ (tree-instr-print ,%tree (current-output-port)) (error "no matching pattern"))))))))))
 
 )

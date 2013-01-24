@@ -8,14 +8,20 @@
   (import helpers)
 
   ;; The default selected architecture
-  (define *arch* #f)
+  (define *arch*          #f)
+  (define *hreg-start-id* #f)
+  (define *hreg-table*    #f)
 
-  (define-struct arch-descriptor
-      (make-context
+  (define-struct arch-impl
+      (init
+       make-context
        operand-format
-       vregs-read
-       vregs-written
+       vreg-uses
+       vreg-defs
        generate-bridge-context
+       assign-stack-slot
+       rewrite
+       print-frame-info
        emit-statement))
 
 )

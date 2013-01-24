@@ -1,4 +1,6 @@
-(declare (unit rules-x86-64))
+(declare (unit rules-x86-64)
+         (uses machine tree))
+
 (module rules-x86-64 *
 
   (import scheme)

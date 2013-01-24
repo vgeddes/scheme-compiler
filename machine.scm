@@ -16,7 +16,7 @@
 
   ;; aggregate structures
   (define-struct mod   (cxts))
-  (define-struct cxt   (name strt vrgs hreg-params stk-params stk-locals))
+  (define-struct cxt   (name strt vrgs vrgs-count hreg-params stk-params stk-locals))
   (define-struct blk   (name head tail succ cxt))
 
   ;; instructions
@@ -24,7 +24,7 @@
   (define-struct inst  (spec ops nxt prv idx blk attrs))
 
   ;; operands
-  (define-struct vreg  (name hreg pref usrs slot data))
+  (define-struct vreg  (id hreg reserved usrs slot data))
   (define-struct imm   (size value))
   (define-struct disp  (value))
 
@@ -47,15 +47,6 @@
                 ops)
       (and blk (blk-append blk instr))
       instr))
-
-  (define vreg-make
-    (lambda operands
-      (match operands
-             ((name)
-              (make-vreg name #f #f '() #f '()))
-             ((name hreg pref)
-              (make-vreg name hreg pref '() #f '()))
-             (else (assert-not-reached)))))
 
   (define (disp-make value)
     (make-disp value))
@@ -82,8 +73,7 @@
     (vreg-usrs-set! vr (cons instr (vreg-usrs vr))))
 
   (define (vreg-remove-user vr instr)
-    (vreg-usrs-set! vr
-                    (lset-difference vreg-equal? (vreg-usrs vr) (list instr))))
+    (vreg-usrs-set! vr (lset-difference vreg-equal? (vreg-usrs vr) (list instr))))
 
   ;; Imm Protocol
 
@@ -97,24 +87,24 @@
 
   ;; Instruction Protocol
 
-  ;; Get all vregs that are read
-  (define (inst-vregs-read instr)
-    (arch-vregs-read instr))
+  ;; Get all vregs that are used at this instr
+  (define (vreg-uses instr)
+    (arch-vreg-uses instr))
 
-  ;; Get all vregs that are written
-  (define (inst-vregs-written instr)
-    (arch-vregs-written instr))
+  ;; Get all vregs that are defined at this instr
+  (define (vreg-defs instr)
+    (arch-vreg-defs instr))
 
-  (define (inst-is-read? instr vr)
+  (define (vreg-use? vr instr)
     (and (find (lambda (x)
                  (vreg-equal? x vr))
-               (inst-vregs-read instr))
+               (vreg-uses instr))
          #t))
 
-  (define (inst-is-written? instr vr)
+  (define (vreg-def? vr instr)
     (and (find (lambda (x)
                  (vreg-equal? x vr))
-               (inst-vregs-written instr))
+               (vreg-defs instr))
          #t))
 
   (define (inst-attr inst name)
@@ -122,6 +112,9 @@
      ((assq name (inst-attrs inst))
       => cdr)
      (else #f)))
+
+  (define (inst-attr-add inst attr val)
+    (inst-attrs-set! inst (cons (cons attr val) (inst-attrs inst))))
 
   ;; Replace a vreg
   (define (inst-replace-vreg instr vr x)
@@ -139,28 +132,11 @@
              ops)))
     (inst-ops-set! instr (replace (inst-ops instr))))
 
-  ;; Context Protocol
-
-  (define cxt-alloc-vreg
-    (lambda operands
-      (match operands
-             ((cxt name rest* ...)
-              (let ((vregs (cxt-vrgs cxt)))
-                (cond
-                 ((find (lambda (vr)
-                          (eq? (vreg-name vr) name))
-                        vregs)
-                  => (lambda (vr) vr))
-                 (else
-                  (let ((vr (apply vreg-make (cons name rest*))))
-                    (cxt-vrgs-set! cxt (cons vr vregs))
-                    vr)))))
-             (else (assert-not-reached)))))
-
-  ;; hregs
-  (define (hreg-ref cxt name)
-    (cxt-alloc-vreg cxt name name #f))
-
+  (define (vreg-alloc cxt)
+    (let ((vreg (make-vreg (cxt-vrgs-count cxt) #f #f '() #f '())))
+      (cxt-vrgs-set! cxt (cons vreg (cxt-vrgs cxt)))
+      (cxt-vrgs-count-set! cxt (+ 1 (cxt-vrgs-count cxt)))
+      vreg))
 
   ;; Printing
 
@@ -171,18 +147,10 @@
                     (cxt-print cxt port))
                   mod))
 
-
   (define (cxt-print cxt port)
     (struct-case cxt
-      ((cxt name strt vregs hreg-params stk-params stk-locals)
-
-       (fprintf port "  # context: ~s\n" name)
-       (fprintf port "  #   args:      ~s\n" (map vreg-name (append hreg-params stk-params)))
-       (fprintf port "  #   reg-args:  ~s\n" (map vreg-name hreg-params))
-       (fprintf port "  #   frame:\n")
-       (fprintf port "  #     args:    ~s\n" (map vreg-name stk-params))
-       (fprintf port "  #     locals:  ~s\n" 0)
-
+      ((cxt name strt vrgs vrgs-count hreg-params stk-params stk-locals)
+       (arch-print-frame-info cxt port)
        (blk-for-each
         (lambda (block)
           (blk-print block port))
@@ -209,7 +177,6 @@
                                          (cons (vector-ref ops-vect (- i 1)) x))
                                        '()
                                        fmt-indices))))
-      ;;  (fprintf port "                                     # live = ~s\n" (map (lambda (vreg) (vreg-name vreg)) (inst-data instr)))
       (fprintf port "    ")
       (fprintf port
                (apply format
@@ -295,7 +262,6 @@
                     (visit-block succ f))
                   succ)))
     (visit-block (cxt-strt cxt) f))
-
 
   (define (inst-for-each f blk)
     (let ((head (blk-head blk)))
